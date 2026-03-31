@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment variables
+.env
+**/.env
+!**/.env.example
+
+# Build output
+dist/
+build/
+.next/
+**/dist/
+**/build/
+
+# Prisma migrations (keep schema)
+backend/prisma/migrations/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Vercel
+.vercel/
