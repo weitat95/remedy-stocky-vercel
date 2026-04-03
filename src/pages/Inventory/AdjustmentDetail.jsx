@@ -1,10 +1,10 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   Page, Layout, Card, FormLayout, Select, TextField, Button, Banner,
   IndexTable, Text, InlineStack, BlockStack, Box, Spinner, Badge,
   Autocomplete, Icon, Popover, ActionList, Divider, Checkbox,
 } from '@shopify/polaris';
-import { SearchIcon, DeleteIcon, SettingsIcon } from '@shopify/polaris-icons';
+import { SearchIcon, DeleteIcon, SettingsIcon, ImportIcon } from '@shopify/polaris-icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -14,6 +14,7 @@ import {
 } from '../../api/adjustments.js';
 import { getLocations } from '../../api/inventory.js';
 import { getProducts } from '../../api/products.js';
+import { parseCSV } from '../../utils/csv.js';
 
 const REASON_PRESETS = [
   '99 STOCK WRITE OFF',
@@ -95,6 +96,72 @@ export default function AdjustmentDetail() {
   // ── Column visibility ─────────────────────────────────────────────────────
   const [visibleCols, setVisibleCols] = useState(new Set(ALL_COLUMNS.map((c) => c.id)));
   const [colPopover, setColPopover] = useState(false);
+
+  // ── CSV import ────────────────────────────────────────────────────────────
+  const csvFileRef = useRef(null);
+  const [csvImporting, setCsvImporting] = useState(false);
+  const [csvResult, setCsvResult] = useState(null); // { added, skipped, notFound }
+
+  const handleCsvFileSelect = useCallback(async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setCsvImporting(true);
+    setCsvResult(null);
+    setSaveError(null);
+    try {
+      const rows = parseCSV(await file.text());
+      if (rows.length === 0) return;
+      const firstRow = rows[0];
+      const deltaKey = 'adjustment' in firstRow ? 'adjustment' : 'delta' in firstRow ? 'delta' : null;
+      if (!('sku' in firstRow) || !deltaKey) {
+        setSaveError('CSV must have "sku" and "adjustment" (or "delta") columns.');
+        return;
+      }
+      const lookups = await Promise.all(
+        rows.map(async (row) => {
+          const sku = row.sku?.trim();
+          if (!sku) return null;
+          const data = await getProducts({ search: sku, searchBy: 'sku', first: 1 });
+          const product = data.products[0];
+          if (!product) return { sku, found: false, delta: row[deltaKey]?.trim() };
+          const variant = product.variants.find((v) => v.sku === sku) ?? product.variants[0];
+          return {
+            sku,
+            found: true,
+            delta: row[deltaKey]?.trim() ?? '0',
+            item: {
+              shopifyVariantId: variant.id,
+              inventoryItemId: variant.inventoryItemId ?? '',
+              productTitle: product.title,
+              variantTitle: product.variants.length === 1 ? '' : variant.title,
+              sku: variant.sku ?? '',
+              productStatus: product.status ?? '',
+              storedOldQty: null,
+            },
+          };
+        })
+      );
+      let added = 0, skipped = 0;
+      const notFound = [];
+      const newItems = [];
+      const existingSkus = new Set(lineItems.map((li) => li.sku));
+      for (const r of lookups) {
+        if (!r) continue;
+        if (!r.found) { notFound.push(r.sku); continue; }
+        if (existingSkus.has(r.item.sku)) { skipped++; continue; }
+        existingSkus.add(r.item.sku);
+        newItems.push({ ...r.item, delta: r.delta });
+        added++;
+      }
+      if (newItems.length > 0) setLineItems((prev) => [...prev, ...newItems]);
+      setCsvResult({ added, skipped, notFound });
+    } catch (err) {
+      setSaveError('CSV import failed: ' + err.message);
+    } finally {
+      setCsvImporting(false);
+    }
+  }, [lineItems]);
 
   // ── Error ─────────────────────────────────────────────────────────────────
   const [saveError, setSaveError] = useState(null);
@@ -326,12 +393,46 @@ export default function AdjustmentDetail() {
             <Banner tone="critical" onDismiss={() => setSaveError(null)}>{saveError}</Banner>
           </Layout.Section>
         )}
+        {csvResult && (
+          <Layout.Section>
+            <Banner
+              tone={csvResult.notFound.length > 0 ? 'warning' : 'success'}
+              onDismiss={() => setCsvResult(null)}
+            >
+              {csvResult.added} variant{csvResult.added !== 1 ? 's' : ''} imported
+              {csvResult.skipped > 0 ? `, ${csvResult.skipped} skipped (already in list)` : ''}
+              {csvResult.notFound.length > 0
+                ? `, ${csvResult.notFound.length} SKU${csvResult.notFound.length !== 1 ? 's' : ''} not found: ${csvResult.notFound.join(', ')}`
+                : ''}
+            </Banner>
+          </Layout.Section>
+        )}
 
         <Layout.Section>
           <Card padding="0">
             {/* Table toolbar */}
             <Box padding="300" borderBlockEndWidth="025" borderColor="border">
-              <InlineStack align="end">
+              <InlineStack align="space-between" blockAlign="center">
+                {!isArchived && (
+                  <>
+                    <input
+                      ref={csvFileRef}
+                      type="file"
+                      accept=".csv,text/csv"
+                      style={{ display: 'none' }}
+                      onChange={handleCsvFileSelect}
+                    />
+                    <Button
+                      icon={ImportIcon}
+                      size="slim"
+                      loading={csvImporting}
+                      onClick={() => csvFileRef.current?.click()}
+                    >
+                      Import CSV
+                    </Button>
+                  </>
+                )}
+                {isArchived && <span />}
                 <Popover
                   active={colPopover}
                   activator={

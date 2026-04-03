@@ -34,7 +34,7 @@ export async function getInventoryLevel(inventoryItemId, locationId) {
   const res = await apiClient.get('/adjustments/inventory-level', {
     params: { inventoryItemId, locationId },
   });
-  return res.data.data.qty;
+  return res.data.data.qty; // null if not stocked at location, number otherwise
 }
 
 export async function archiveAdjustment(id) {

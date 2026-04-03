@@ -5,7 +5,7 @@ import {
   TextField, Select, Tabs, Modal, DropZone, Icon, Link,
   InlineGrid,
 } from '@shopify/polaris';
-import { SearchIcon, ExternalIcon } from '@shopify/polaris-icons';
+import { SearchIcon, ExternalIcon, ChevronDownIcon, ChevronUpIcon } from '@shopify/polaris-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getProducts, importVariantMeta } from '../../api/products.js';
 
@@ -144,11 +144,21 @@ export default function Products() {
     setImportOpen(true);
   }, []);
 
+  // ── Expandable rows ───────────────────────────────────────────────────────
+  const [expandedIds, setExpandedIds] = useState(new Set());
+  const toggleExpanded = useCallback((id) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
+
   // ── Table ─────────────────────────────────────────────────────────────────
   const headings = [
     { id: 'thumbnail', title: '' },
     { id: 'title', title: 'Title' },
-    { id: 'variants', title: 'Variants' },
+    { id: 'sku', title: 'SKU' },
     { id: 'vendor', title: 'Vendor' },
     { id: 'shopify-link', title: '' },
   ];
@@ -218,51 +228,88 @@ export default function Products() {
                 headings={headings}
                 selectable={false}
               >
-                {products.map((product, index) => (
-                  <IndexTable.Row id={product.id} key={product.id} position={index}>
-                    {/* Thumbnail */}
-                    <IndexTable.Cell flush>
-                      <Box padding="200">
-                        <Thumbnail
-                          source={product.thumbnailUrl || ''}
-                          alt={product.title}
-                          size="small"
-                        />
-                      </Box>
-                    </IndexTable.Cell>
+                {products.map((product, index) => {
+                  const isExpanded = expandedIds.has(product.id);
+                  const singleVariant = product.variants.length === 1 ? product.variants[0] : null;
+                  return (
+                    <React.Fragment key={product.id}>
+                      <IndexTable.Row id={product.id} position={index}>
+                        {/* Thumbnail */}
+                        <IndexTable.Cell flush>
+                          <Box padding="200">
+                            <Thumbnail
+                              source={product.thumbnailUrl || ''}
+                              alt={product.title}
+                              size="small"
+                            />
+                          </Box>
+                        </IndexTable.Cell>
 
-                    {/* Title + status */}
-                    <IndexTable.Cell>
-                      <BlockStack gap="050">
-                        <Text variant="bodyMd" fontWeight="semibold">{product.title}</Text>
-                        <ProductStatusBadge status={product.status} />
-                      </BlockStack>
-                    </IndexTable.Cell>
+                        {/* Title + status */}
+                        <IndexTable.Cell>
+                          <BlockStack gap="050">
+                            <Text variant="bodyMd" fontWeight="semibold">{product.title}</Text>
+                            <ProductStatusBadge status={product.status} />
+                          </BlockStack>
+                        </IndexTable.Cell>
 
-                    {/* Variant count */}
-                    <IndexTable.Cell>
-                      <Text tone="subdued">{product.variantCount}</Text>
-                    </IndexTable.Cell>
+                        {/* SKU */}
+                        <IndexTable.Cell>
+                          {singleVariant ? (
+                            <Text tone="subdued">{singleVariant.sku || '—'}</Text>
+                          ) : (
+                            <Button
+                              variant="plain"
+                              size="slim"
+                              icon={isExpanded ? ChevronUpIcon : ChevronDownIcon}
+                              onClick={() => toggleExpanded(product.id)}
+                            >
+                              {product.variantCount} variants
+                            </Button>
+                          )}
+                        </IndexTable.Cell>
 
-                    {/* Vendor */}
-                    <IndexTable.Cell>
-                      <Text tone="subdued">{product.vendor || '—'}</Text>
-                    </IndexTable.Cell>
+                        {/* Vendor */}
+                        <IndexTable.Cell>
+                          <Text tone="subdued">{product.vendor || '—'}</Text>
+                        </IndexTable.Cell>
 
-                    {/* Shopify link */}
-                    <IndexTable.Cell>
-                      {shopifyAdminBase && (
-                        <Link
-                          url={`${shopifyAdminBase}/products/${product.id.replace('gid://shopify/Product/', '')}`}
-                          external
-                          removeUnderline
+                        {/* Shopify link */}
+                        <IndexTable.Cell>
+                          {shopifyAdminBase && (
+                            <Link
+                              url={`${shopifyAdminBase}/products/${product.id.replace('gid://shopify/Product/', '')}`}
+                              external
+                              removeUnderline
+                            >
+                              <Icon source={ExternalIcon} tone="subdued" />
+                            </Link>
+                          )}
+                        </IndexTable.Cell>
+                      </IndexTable.Row>
+
+                      {/* Variant sub-rows */}
+                      {!singleVariant && isExpanded && product.variants.map((variant, vIdx) => (
+                        <IndexTable.Row
+                          id={`${product.id}-${variant.id}`}
+                          key={variant.id}
+                          position={index + vIdx + 1}
+                          rowType="child"
                         >
-                          <Icon source={ExternalIcon} tone="subdued" />
-                        </Link>
-                      )}
-                    </IndexTable.Cell>
-                  </IndexTable.Row>
-                ))}
+                          <IndexTable.Cell />
+                          <IndexTable.Cell>
+                            <Text tone="subdued">{variant.title}</Text>
+                          </IndexTable.Cell>
+                          <IndexTable.Cell>
+                            <Text tone="subdued">{variant.sku || '—'}</Text>
+                          </IndexTable.Cell>
+                          <IndexTable.Cell />
+                          <IndexTable.Cell />
+                        </IndexTable.Row>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
               </IndexTable>
             )}
 
