@@ -15,6 +15,11 @@ import {
   EmptyState,
   InlineGrid,
   Box,
+  Modal,
+  TextField,
+  FormLayout,
+  ResourceList,
+  ResourceItem,
 } from '@shopify/polaris';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -25,6 +30,7 @@ import {
   clonePurchaseOrder,
   archivePurchaseOrder,
 } from '../../api/purchaseOrders.js';
+import { getTaxRates, createTaxRate, updateTaxRate, deleteTaxRate } from '../../api/taxRates.js';
 import POForm from './POForm.jsx';
 
 function fmtDate(d) {
@@ -86,6 +92,50 @@ export default function PurchaseOrders() {
   const confirmMutation = useMutation({ mutationFn: confirmPurchaseOrder, onSuccess: invalidate });
   const cloneMutation = useMutation({ mutationFn: clonePurchaseOrder, onSuccess: invalidate });
   const archiveMutation = useMutation({ mutationFn: archivePurchaseOrder, onSuccess: invalidate });
+
+  // ── Manage taxes modal ────────────────────────────────────────────────────
+  const [taxesOpen, setTaxesOpen] = useState(false);
+  const [newTaxName, setNewTaxName] = useState('');
+  const [newTaxRate, setNewTaxRate] = useState('');
+  const [editingTaxId, setEditingTaxId] = useState(null);
+  const [editingTaxName, setEditingTaxName] = useState('');
+  const [editingTaxRate, setEditingTaxRate] = useState('');
+
+  const { data: taxRates = [] } = useQuery({
+    queryKey: ['tax-rates'],
+    queryFn: getTaxRates,
+    enabled: taxesOpen,
+  });
+
+  const createTaxMutation = useMutation({
+    mutationFn: () => createTaxRate({ name: newTaxName.trim(), rate: Number(newTaxRate) }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tax-rates'] });
+      setNewTaxName('');
+      setNewTaxRate('');
+    },
+  });
+
+  const updateTaxMutation = useMutation({
+    mutationFn: ({ id, name, rate }) => updateTaxRate(id, { name, rate }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tax-rates'] });
+      setEditingTaxId(null);
+    },
+  });
+
+  const deleteTaxMutation = useMutation({
+    mutationFn: deleteTaxRate,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tax-rates'] }),
+  });
+
+  const startEditTax = useCallback((t) => {
+    setEditingTaxId(t.id);
+    setEditingTaxName(t.name);
+    setEditingTaxRate(String(t.rate));
+  }, []);
+
+  const cancelEditTax = useCallback(() => setEditingTaxId(null), []);
 
   const handleCreate = useCallback(() => { setEditingPO(null); setShowForm(true); }, []);
   const handleEdit = useCallback((po) => navigate(`/purchase-orders/${po.id}`), [navigate]);
@@ -151,10 +201,10 @@ export default function PurchaseOrders() {
     <Page
       title="Purchase Orders"
       primaryAction={{ content: 'Create PO', onAction: handleCreate }}
-      secondaryActions={[{
-        content: showArchived ? 'Hide archived' : 'Show archived',
-        onAction: () => setShowArchived((v) => !v),
-      }]}
+      secondaryActions={[
+        { content: showArchived ? 'Hide archived' : 'Show archived', onAction: () => setShowArchived((v) => !v) },
+        { content: 'Manage taxes', onAction: () => setTaxesOpen(true) },
+      ]}
     >
       <Layout>
         {error && (
@@ -342,6 +392,102 @@ export default function PurchaseOrders() {
           </Card>
         </Layout.Section>
       </Layout>
+
+      {/* ── Manage taxes modal ─────────────────────────────────────────── */}
+      <Modal
+        open={taxesOpen}
+        onClose={() => setTaxesOpen(false)}
+        title="Manage tax rates"
+        secondaryActions={[{ content: 'Close', onAction: () => setTaxesOpen(false) }]}
+      >
+        <Modal.Section>
+          <FormLayout>
+            <FormLayout.Group>
+              <TextField
+                label="Name"
+                value={newTaxName}
+                onChange={setNewTaxName}
+                autoComplete="off"
+                placeholder="e.g. SST Sales 6%"
+              />
+              <TextField
+                label="Rate (%)"
+                type="number"
+                value={newTaxRate}
+                onChange={setNewTaxRate}
+                autoComplete="off"
+                suffix="%"
+                placeholder="0"
+              />
+            </FormLayout.Group>
+            <Button
+              variant="primary"
+              onClick={() => createTaxMutation.mutate()}
+              loading={createTaxMutation.isPending}
+              disabled={!newTaxName.trim() || newTaxRate === ''}
+            >
+              Add tax rate
+            </Button>
+          </FormLayout>
+        </Modal.Section>
+
+        <Modal.Section flush>
+          <ResourceList
+            resourceName={{ singular: 'tax rate', plural: 'tax rates' }}
+            items={taxRates}
+            renderItem={(t) => (
+              <ResourceItem
+                id={t.id}
+                shortcutActions={
+                  editingTaxId !== t.id
+                    ? [
+                        { content: 'Edit', onAction: () => startEditTax(t) },
+                        { content: 'Delete', destructive: true, onAction: () => deleteTaxMutation.mutate(t.id) },
+                      ]
+                    : []
+                }
+              >
+                {editingTaxId === t.id ? (
+                  <InlineStack gap="200" blockAlign="center">
+                    <div style={{ flex: 2 }}>
+                      <TextField
+                        value={editingTaxName}
+                        onChange={setEditingTaxName}
+                        autoComplete="off"
+                        onKeyDown={(e) => e.key === 'Escape' && cancelEditTax()}
+                      />
+                    </div>
+                    <div style={{ width: 90 }}>
+                      <TextField
+                        type="number"
+                        value={editingTaxRate}
+                        onChange={setEditingTaxRate}
+                        autoComplete="off"
+                        suffix="%"
+                      />
+                    </div>
+                    <Button
+                      size="slim"
+                      variant="primary"
+                      loading={updateTaxMutation.isPending}
+                      disabled={!editingTaxName.trim() || editingTaxRate === ''}
+                      onClick={() => updateTaxMutation.mutate({ id: t.id, name: editingTaxName, rate: Number(editingTaxRate) })}
+                    >
+                      Save
+                    </Button>
+                    <Button size="slim" onClick={cancelEditTax}>Cancel</Button>
+                  </InlineStack>
+                ) : (
+                  <InlineStack gap="400">
+                    <Text variant="bodyMd" fontWeight="semibold">{t.name}</Text>
+                    <Text tone="subdued">{t.rate}%</Text>
+                  </InlineStack>
+                )}
+              </ResourceItem>
+            )}
+          />
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }

@@ -19,6 +19,7 @@ import Dashboard from './pages/Dashboard/index.jsx';
 import Vendors from './pages/Vendors/index.jsx';
 import VendorDetail from './pages/Vendors/VendorDetail.jsx';
 import Suppliers from './pages/Suppliers/index.jsx';
+import SupplierDetail from './pages/Suppliers/SupplierDetail.jsx';
 import Locations from './pages/Locations/index.jsx';
 import PurchaseOrders from './pages/PurchaseOrders/index.jsx';
 import PODetail from './pages/PurchaseOrders/PODetail.jsx';
@@ -184,7 +185,8 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/vendors" element={<Vendors />} />
         <Route path="/vendors/:id" element={<VendorDetail />} />
-        <Route path="/suppliers/*" element={<Suppliers />} />
+        <Route path="/suppliers" element={<Suppliers />} />
+        <Route path="/suppliers/:id" element={<SupplierDetail />} />
         <Route path="/locations" element={<Locations />} />
         <Route path="/purchase-orders" element={<PurchaseOrders />} />
         <Route path="/purchase-orders/:id" element={<PODetail />} />

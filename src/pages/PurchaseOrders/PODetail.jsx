@@ -13,6 +13,7 @@ import {
   undoReceivePO,
   updatePurchaseOrder,
 } from '../../api/purchaseOrders.js';
+import { getTaxRates } from '../../api/taxRates.js';
 import POForm from './POForm.jsx';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -55,17 +56,19 @@ function lineItemStatus(li) {
 }
 
 function computeTotals(po) {
-  const subtotal = (po.lineItems || []).reduce(
+  const lineItems = po.lineItems || [];
+  const subtotal = lineItems.reduce(
     (s, li) => s + (parseFloat(li.costPrice || 0) * li.quantity),
     0
   );
+  const tax = lineItems.reduce((s, li) => {
+    const lineCost = parseFloat(li.costPrice || 0) * li.quantity;
+    return s + lineCost * (parseFloat(li.taxRate || 0) / 100);
+  }, 0);
   const adjustments = parseFloat(po.adjustments || 0);
   const shipping = parseFloat(po.shippingCost || 0);
-  const taxRate = parseFloat(po.taxRate || 0);
-  const taxable = subtotal + adjustments + shipping;
-  const tax = taxable * (taxRate / 100);
-  const total = taxable + tax;
-  return { subtotal, adjustments, shipping, taxRate, tax, total };
+  const total = subtotal + tax + adjustments + shipping;
+  return { subtotal, tax, adjustments, shipping, total };
 }
 
 // ── CSV export ────────────────────────────────────────────────────────────────
@@ -113,6 +116,11 @@ export default function PODetail() {
   const queryClient = useQueryClient();
   const [editMode, setEditMode] = useState(false);
   const [notes, setNotes] = useState(null); // { poNotes, supplierNotes } — null = not dirty
+
+  const { data: taxRates = [] } = useQuery({ queryKey: ['tax-rates'], queryFn: getTaxRates });
+  const taxNameMap = Object.fromEntries(
+    taxRates.map((t) => [String(parseFloat(t.rate)), t.name])
+  );
 
   const { data: po, isLoading, error, refetch } = useQuery({
     queryKey: ['po-detail', id],
@@ -199,7 +207,7 @@ export default function PODetail() {
   const itemsTableHeadings = [
     { title: 'Product' }, { title: 'SKU' }, { title: 'Supplier Code' }, { title: 'Text 1' },
     { title: 'Status' }, { title: 'Received' }, { title: 'Retail' }, { title: 'Cost' },
-    { title: 'Available' }, { title: 'Qty' },
+    { title: 'Tax %' }, { title: 'Available' }, { title: 'Qty' },
   ];
 
   return (
@@ -270,6 +278,13 @@ export default function PODetail() {
                     </IndexTable.Cell>
                     <IndexTable.Cell>
                       {fmtMoney(li.costPrice)}
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                      <Text tone="subdued">
+                        {li.taxRate != null && li.taxRate !== 0
+                          ? (taxNameMap[String(parseFloat(li.taxRate))] ?? `${li.taxRate}%`)
+                          : '—'}
+                      </Text>
                     </IndexTable.Cell>
                     <IndexTable.Cell>
                       {li.available != null ? li.available : '—'}
@@ -379,8 +394,8 @@ export default function PODetail() {
                 {totals.shipping > 0 && (
                   <SideRow label="Shipping" value={fmtMoney(totals.shipping)} />
                 )}
-                {totals.taxRate > 0 && (
-                  <SideRow label={`Tax (${totals.taxRate}%)`} value={fmtMoney(totals.tax)} />
+                {totals.tax > 0 && (
+                  <SideRow label="Tax" value={fmtMoney(totals.tax)} />
                 )}
                 <Divider />
                 <InlineStack align="space-between" blockAlign="center">

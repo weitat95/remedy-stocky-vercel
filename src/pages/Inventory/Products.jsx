@@ -160,6 +160,7 @@ export default function Products() {
     { id: 'title', title: 'Title' },
     { id: 'sku', title: 'SKU' },
     { id: 'vendor', title: 'Vendor' },
+    { id: 'supplier', title: 'Supplier' },
     { id: 'shopify-link', title: '' },
   ];
 
@@ -274,6 +275,19 @@ export default function Products() {
                           <Text tone="subdued">{product.vendor || '—'}</Text>
                         </IndexTable.Cell>
 
+                        {/* Supplier */}
+                        <IndexTable.Cell>
+                          {product.suppliers?.length > 0 ? (
+                            <InlineStack gap="100" wrap>
+                              {product.suppliers.map((s) => (
+                                <Badge key={s.id} tone="info">{s.name}</Badge>
+                              ))}
+                            </InlineStack>
+                          ) : (
+                            <Text tone="subdued">—</Text>
+                          )}
+                        </IndexTable.Cell>
+
                         {/* Shopify link */}
                         <IndexTable.Cell>
                           {shopifyAdminBase && (
@@ -303,6 +317,7 @@ export default function Products() {
                           <IndexTable.Cell>
                             <Text tone="subdued">{variant.sku || '—'}</Text>
                           </IndexTable.Cell>
+                          <IndexTable.Cell />
                           <IndexTable.Cell />
                           <IndexTable.Cell />
                         </IndexTable.Row>

@@ -14,17 +14,8 @@ import {
 } from '../../api/adjustments.js';
 import { getLocations } from '../../api/inventory.js';
 import { getProducts } from '../../api/products.js';
+import { getAdjustmentReasons } from '../../api/adjustmentReasons.js';
 import { parseCSV } from '../../utils/csv.js';
-
-const REASON_PRESETS = [
-  '99 STOCK WRITE OFF',
-  'Consignment Return',
-  'Stock Replenishment',
-  'Stocktake',
-  'Wholesale',
-  'Stock Correction',
-  'Damaged / Tester Use',
-];
 
 const ALL_COLUMNS = [
   { id: 'product', title: 'Product' },
@@ -78,6 +69,12 @@ export default function AdjustmentDetail() {
     queryFn: getLocations,
   });
   const locations = locationsRaw?.data ?? [];
+
+  // ── Reason presets ──────────────────────────────────────────────────────��─
+  const { data: reasonPresets = [] } = useQuery({
+    queryKey: ['adjustment-reasons'],
+    queryFn: getAdjustmentReasons,
+  });
   const locationOptions = [
     { label: 'Select location…', value: '' },
     ...locations.map((l) => ({ label: l.name, value: l.id })),
@@ -241,9 +238,10 @@ export default function AdjustmentDetail() {
   }, []);
 
   // ── Reason combobox ───────────────────────────────────────────────────────
-  const reasonOpts = REASON_PRESETS.filter((r) =>
-    !reason || r.toLowerCase().includes(reason.toLowerCase())
-  ).map((r) => ({ value: r, label: r }));
+  const reasonOpts = reasonPresets
+    .map((p) => p.label)
+    .filter((r) => !reason || r.toLowerCase().includes(reason.toLowerCase()))
+    .map((r) => ({ value: r, label: r }));
 
   // ── Mutations ─────────────────────────────────────────────────────────────
   const buildBody = () => ({

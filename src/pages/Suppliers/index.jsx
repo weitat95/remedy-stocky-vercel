@@ -1,4 +1,5 @@
 import React, { useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Page, Card, ResourceList, ResourceItem, Text,
   Button, Modal, FormLayout, TextField, Banner, Spinner,
@@ -7,6 +8,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getSuppliers, createSupplier, deleteSupplier } from '../../api/suppliers.js';
 
 export default function Suppliers() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', phone: '', leadDays: '7' });
@@ -31,7 +33,7 @@ export default function Suppliers() {
     createMutation.mutate({ ...form, leadDays: Number(form.leadDays) });
   }, [form, createMutation]);
 
-  const suppliers = data?.data || [];
+  const suppliers = data || [];
 
   return (
     <Page
@@ -49,6 +51,7 @@ export default function Suppliers() {
             renderItem={(supplier) => (
               <ResourceItem
                 id={supplier.id}
+                onClick={() => navigate(`/suppliers/${supplier.id}`)}
                 shortcutActions={[
                   { content: 'Delete', destructive: true, onAction: () => deleteMutation.mutate(supplier.id) },
                 ]}

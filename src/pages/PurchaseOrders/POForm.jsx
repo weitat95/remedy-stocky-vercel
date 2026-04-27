@@ -5,8 +5,9 @@ import {
   InlineGrid, Box,
 } from '@shopify/polaris';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { getSuppliers } from '../../api/suppliers.js';
+import { getSuppliers, getSupplierVariants } from '../../api/suppliers.js';
 import { getLocations } from '../../api/inventory.js';
+import { getTaxRates } from '../../api/taxRates.js';
 import { createPurchaseOrder, updatePurchaseOrder } from '../../api/purchaseOrders.js';
 
 const EMPTY_LINE_ITEM = {
@@ -17,6 +18,7 @@ const EMPTY_LINE_ITEM = {
   quantity: '',
   costPrice: '',
   retailPrice: '',
+  taxRate: '0',
 };
 
 const STATUS_OPTIONS = [
@@ -48,8 +50,8 @@ export default function POForm({ onClose, existingPO }) {
   const [receiveLocationId, setReceiveLocationId] = useState(existingPO?.receiveLocationId || '');
   const [adjustments, setAdjustments] = useState(String(existingPO?.adjustments ?? '0'));
   const [shippingCost, setShippingCost] = useState(String(existingPO?.shippingCost ?? '0'));
-  const [taxRate, setTaxRate] = useState(String(existingPO?.taxRate ?? '0'));
   const [paid, setPaid] = useState(existingPO?.paid || false);
+  const [bulkTaxRate, setBulkTaxRate] = useState('0');
   const [lineItems, setLineItems] = useState(
     existingPO?.lineItems?.length
       ? existingPO.lineItems.map((li) => ({
@@ -61,6 +63,7 @@ export default function POForm({ onClose, existingPO }) {
           quantity: String(li.quantity),
           costPrice: li.costPrice != null ? String(li.costPrice) : '',
           retailPrice: li.retailPrice != null ? String(li.retailPrice) : '',
+          taxRate: li.taxRate != null ? String(parseFloat(li.taxRate)) : '0',
           quantityReceived: li.quantityReceived || 0,
           // enriched
           productTitle: li.productTitle,
@@ -74,6 +77,39 @@ export default function POForm({ onClose, existingPO }) {
   const { data: suppliers = [] } = useQuery({ queryKey: ['suppliers'], queryFn: getSuppliers });
   const { data: locationsRaw } = useQuery({ queryKey: ['locations'], queryFn: getLocations });
   const locationsData = locationsRaw?.data ?? [];
+  const { data: taxRates = [] } = useQuery({ queryKey: ['tax-rates'], queryFn: getTaxRates });
+
+  const taxRateOptions = [
+    { label: '— No tax —', value: '0' },
+    ...taxRates.map((t) => ({ label: t.name, value: String(parseFloat(t.rate)) })),
+  ];
+
+  const { data: supplierVariants = [], isFetching: loadingVariants } = useQuery({
+    queryKey: ['supplier-variants', supplierId],
+    queryFn: () => getSupplierVariants(supplierId),
+    enabled: !isEditing && Boolean(supplierId),
+  });
+
+  const isLineItemsEmpty = lineItems.length === 1 && !lineItems[0].shopifyVariantId;
+
+  const handleLoadSupplierProducts = useCallback(() => {
+    if (!supplierVariants.length) return;
+    setLineItems(
+      supplierVariants.map((v) => ({
+        shopifyProductId: v.shopifyProductId,
+        shopifyVariantId: v.shopifyVariantId,
+        productTitle: v.productTitle,
+        variantTitle: v.variantTitle,
+        sku: v.sku,
+        supplierCode: '',
+        textNote: '',
+        quantity: '',
+        costPrice: v.costPrice != null ? String(v.costPrice) : '',
+        retailPrice: '',
+        taxRate: '0',
+      }))
+    );
+  }, [supplierVariants]);
 
   const supplierOptions = [
     { label: 'Select a supplier', value: '' },
@@ -96,6 +132,9 @@ export default function POForm({ onClose, existingPO }) {
   const handleLineItemChange = useCallback((i, field, value) => {
     setLineItems((p) => p.map((item, idx) => idx === i ? { ...item, [field]: value } : item));
   }, []);
+  const handleApplyTaxToAll = useCallback(() => {
+    setLineItems((p) => p.map((item) => ({ ...item, taxRate: bulkTaxRate })));
+  }, [bulkTaxRate]);
 
   const handleSubmit = useCallback(() => {
     setFormError(null);
@@ -120,7 +159,6 @@ export default function POForm({ onClose, existingPO }) {
       receiveLocationId: receiveLocationId || null,
       adjustments: parseFloat(adjustments) || 0,
       shippingCost: parseFloat(shippingCost) || 0,
-      taxRate: parseFloat(taxRate) || 0,
       paid,
       ...(!isEditing && {
         lineItems: validLineItems.map((li) => ({
@@ -131,13 +169,14 @@ export default function POForm({ onClose, existingPO }) {
           quantity: Number(li.quantity),
           costPrice: li.costPrice || null,
           retailPrice: li.retailPrice || null,
+          taxRate: parseFloat(li.taxRate) || 0,
         })),
       }),
     };
 
     saveMutation.mutate(payload);
   }, [supplierId, status, invoiceNo, orderNo, expectedAt, paymentDue, invoiceDate, shipDate,
-      cancelDate, shippingAddress, receiveLocationId, adjustments, shippingCost, taxRate,
+      cancelDate, shippingAddress, receiveLocationId, adjustments, shippingCost,
       paid, lineItems, isEditing, saveMutation]);
 
   return (
@@ -208,13 +247,25 @@ export default function POForm({ onClose, existingPO }) {
                 <FormLayout.Group>
                   <TextField label="Adjustments" type="number" value={adjustments} onChange={setAdjustments} autoComplete="off" prefix="RM" />
                   <TextField label="Shipping Cost" type="number" value={shippingCost} onChange={setShippingCost} autoComplete="off" prefix="RM" />
-                  <TextField label="Tax Rate (%)" type="number" value={taxRate} onChange={setTaxRate} autoComplete="off" suffix="%" />
                 </FormLayout.Group>
                 <Checkbox label="Paid" checked={paid} onChange={setPaid} />
               </FormLayout>
             </BlockStack>
           </Card>
         </Layout.Section>
+
+        {/* ── Supplier products pre-fill ── */}
+        {!isEditing && supplierId && supplierVariants.length > 0 && isLineItemsEmpty && (
+          <Layout.Section>
+            <Banner
+              title={`${suppliers.find((s) => s.id === supplierId)?.name ?? 'This supplier'} has ${supplierVariants.length} variant${supplierVariants.length !== 1 ? 's' : ''} assigned`}
+              action={{ content: 'Load products', loading: loadingVariants, onAction: handleLoadSupplierProducts }}
+              tone="info"
+            >
+              <p>Pre-fill line items from this supplier's assigned products. You can remove or adjust quantities before saving.</p>
+            </Banner>
+          </Layout.Section>
+        )}
 
         {/* ── Line items ── */}
         <Layout.Section>
@@ -223,7 +274,18 @@ export default function POForm({ onClose, existingPO }) {
               <InlineStack align="space-between" blockAlign="center">
                 <Text variant="headingMd" as="h2">Line Items</Text>
                 {!isEditing && (
-                  <Button onClick={handleAddLineItem} size="slim">Add Item</Button>
+                  <InlineStack gap="200" blockAlign="end">
+                    <div style={{ width: 180 }}>
+                      <Select
+                        label="Apply tax to all"
+                        options={taxRateOptions}
+                        value={bulkTaxRate}
+                        onChange={setBulkTaxRate}
+                      />
+                    </div>
+                    <Button size="slim" onClick={handleApplyTaxToAll}>Apply</Button>
+                    <Button onClick={handleAddLineItem} size="slim">Add Item</Button>
+                  </InlineStack>
                 )}
               </InlineStack>
               <Divider />
@@ -264,7 +326,7 @@ export default function POForm({ onClose, existingPO }) {
                       </InlineGrid>
                     )}
 
-                    <InlineGrid columns={3} gap="300">
+                    <InlineGrid columns={4} gap="300">
                       <TextField
                         label="Quantity"
                         type="number"
@@ -291,6 +353,13 @@ export default function POForm({ onClose, existingPO }) {
                         autoComplete="off"
                         prefix="RM"
                         placeholder="0.00"
+                      />
+                      <Select
+                        label="Tax"
+                        options={taxRateOptions}
+                        value={item.taxRate ?? '0'}
+                        onChange={(v) => handleLineItemChange(index, 'taxRate', v)}
+                        disabled={isEditing}
                       />
                     </InlineGrid>
                     <InlineGrid columns={2} gap="300">
