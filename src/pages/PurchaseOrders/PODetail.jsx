@@ -19,6 +19,7 @@ import { getTaxRates } from '../../api/taxRates.js';
 import { getPOAttachments, uploadPOAttachment, deletePOAttachment } from '../../api/poAttachments.js';
 import { downloadPOPdf, getPOPdfBase64 } from '../../utils/generatePOPdf.js';
 import POForm from './POForm.jsx';
+import POReceive from './POReceive.jsx';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -119,6 +120,7 @@ export default function PODetail() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [editMode, setEditMode] = useState(false);
+  const [receiveMode, setReceiveMode] = useState(false);
   const [notes, setNotes] = useState(null); // { poNotes, supplierNotes } — null = not dirty
   const [toast, setToast] = useState(null); // { message, error? }
 
@@ -191,6 +193,19 @@ export default function PODetail() {
     );
   }
 
+  if (receiveMode && po) {
+    return (
+      <POReceive
+        po={po}
+        onClose={() => setReceiveMode(false)}
+        onSuccess={() => {
+          setReceiveMode(false);
+          setToast({ message: 'Items received and synced to Shopify' });
+        }}
+      />
+    );
+  }
+
   if (isLoading) {
     return (
       <Page backAction={{ content: 'Purchase Orders', onAction: () => navigate('/purchase-orders') }} title="Loading…">
@@ -209,6 +224,8 @@ export default function PODetail() {
 
   const totals = computeTotals(po);
   const hasReceived = po.lineItems?.some((li) => li.quantityReceived > 0);
+  const isReceivable = ['sent', 'partially_received'].includes(po.status);
+  const hasUnreceived = po.lineItems?.some((li) => li.quantityReceived < li.quantity);
   const notesDirty = notes !== null && (
     (notes.poNotes || '') !== (po.poNotes || '') ||
     (notes.supplierNotes || '') !== (po.supplierNotes || '')
@@ -234,7 +251,11 @@ export default function PODetail() {
       titleMetadata={<Badge tone={statusTone(po.status)}>{statusLabel(po.status)}</Badge>}
       subtitle={`${po.supplier?.name || ''}${po.receiveLocationName ? ` → ${po.receiveLocationName}` : ''}`}
       backAction={{ content: 'Purchase Orders', onAction: () => navigate('/purchase-orders') }}
-      primaryAction={{ content: 'Edit', onAction: () => setEditMode(true) }}
+      primaryAction={
+        isReceivable && hasUnreceived
+          ? { content: 'Receive', onAction: () => setReceiveMode(true) }
+          : { content: 'Edit', onAction: () => setEditMode(true) }
+      }
       secondaryActions={[
         { content: 'Download PDF', onAction: () => downloadPOPdf(po) },
         { content: 'Download CSV', onAction: () => downloadCSV(po) },
@@ -249,6 +270,7 @@ export default function PODetail() {
         {
           title: 'More',
           actions: [
+            ...(isReceivable && hasUnreceived ? [{ content: 'Edit', onAction: () => setEditMode(true) }] : []),
             { content: 'Clone', onAction: () => cloneMutation.mutate() },
             { content: 'Archive', disabled: po.archived, onAction: () => archiveMutation.mutate() },
             { content: 'Undo Receive', disabled: !hasReceived, onAction: () => undoMutation.mutate() },
