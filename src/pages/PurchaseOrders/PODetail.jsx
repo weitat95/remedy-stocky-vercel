@@ -1,7 +1,7 @@
 import React, { useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  Page, Layout, Card, IndexTable, Text, Badge, Button,
+  Page, Layout, Card, IndexTable, Text, Badge, Button, Link,
   InlineStack, BlockStack, Banner, Spinner, Divider,
   Box, InlineGrid, TextField, Icon,
 } from '@shopify/polaris';
@@ -554,16 +554,9 @@ function POAttachments({ poId }) {
                   <InlineStack gap="200" blockAlign="center">
                     <Icon source={AttachmentIcon} tone="subdued" />
                     <BlockStack gap="050">
-                      <Text
-                        variant="bodySm"
-                        fontWeight="semibold"
-                        as="a"
-                        href={a.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
+                      <Link url={a.url} external>
                         {a.fileName}
-                      </Text>
+                      </Link>
                       <Text variant="bodySm" tone="subdued">
                         {fmtSize(a.fileSize)} · {new Date(a.uploadedAt).toLocaleDateString('en-MY', { day: 'numeric', month: 'short', year: 'numeric' })}
                       </Text>
