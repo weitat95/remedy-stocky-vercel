@@ -1,10 +1,11 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Page, Layout, Card, IndexTable, Text, Badge, Button,
   InlineStack, BlockStack, Banner, Spinner, Divider,
-  Box, InlineGrid, TextField,
+  Box, InlineGrid, TextField, Icon,
 } from '@shopify/polaris';
+import { AttachmentIcon, DeleteIcon } from '@shopify/polaris-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getPODetail,
@@ -14,6 +15,7 @@ import {
   updatePurchaseOrder,
 } from '../../api/purchaseOrders.js';
 import { getTaxRates } from '../../api/taxRates.js';
+import { getPOAttachments, uploadPOAttachment, deletePOAttachment } from '../../api/poAttachments.js';
 import POForm from './POForm.jsx';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -334,24 +336,9 @@ export default function PODetail() {
             </Card>
           </Box>
 
-          {/* Files placeholder */}
+          {/* Files */}
           <Box paddingBlockStart="400">
-            <Card>
-              <BlockStack gap="200">
-                <Text variant="headingMd" as="h2">Files</Text>
-                <Box
-                  padding="400"
-                  borderWidth="025"
-                  borderColor="border"
-                  borderRadius="200"
-                  background="bg-surface-secondary"
-                >
-                  <InlineStack align="center">
-                    <Text tone="subdued">File attachments — coming soon</Text>
-                  </InlineStack>
-                </Box>
-              </BlockStack>
-            </Card>
+            <POAttachments poId={id} />
           </Box>
 
         </Layout.Section>
@@ -474,6 +461,129 @@ export default function PODetail() {
         </Layout.Section>
       </Layout>
     </Page>
+  );
+}
+
+function POAttachments({ poId }) {
+  const fileInputRef = useRef(null);
+  const queryClient = useQueryClient();
+
+  const { data: { attachments = [], r2Configured = true } = {}, isLoading } = useQuery({
+    queryKey: ['po-attachments', poId],
+    queryFn: () => getPOAttachments(poId),
+  });
+
+  const uploadMutation = useMutation({
+    mutationFn: (file) => uploadPOAttachment(poId, file),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['po-attachments', poId] }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (attachmentId) => deletePOAttachment(poId, attachmentId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['po-attachments', poId] }),
+  });
+
+  function handleFileChange(e) {
+    const file = e.target.files?.[0];
+    if (file) uploadMutation.mutate(file);
+    e.target.value = '';
+  }
+
+  function fmtSize(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="center">
+          <Text variant="headingMd" as="h2">Files</Text>
+          {r2Configured && (
+            <Button
+              size="slim"
+              icon={AttachmentIcon}
+              loading={uploadMutation.isPending}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Attach file
+            </Button>
+          )}
+        </InlineStack>
+
+        {r2Configured && (
+          <input
+            ref={fileInputRef}
+            type="file"
+            style={{ display: 'none' }}
+            onChange={handleFileChange}
+          />
+        )}
+
+        {uploadMutation.isError && (
+          <Banner tone="critical">{uploadMutation.error?.message || 'Upload failed'}</Banner>
+        )}
+
+        {isLoading ? (
+          <InlineStack align="center"><Spinner size="small" /></InlineStack>
+        ) : attachments.length === 0 ? (
+          <Box
+            padding="400"
+            borderWidth="025"
+            borderColor="border"
+            borderRadius="200"
+            background="bg-surface-secondary"
+          >
+            <InlineStack align="center">
+              <Text tone="subdued">No files attached</Text>
+            </InlineStack>
+          </Box>
+        ) : (
+          <BlockStack gap="200">
+            {attachments.map((a) => (
+              <Box
+                key={a.id}
+                padding="300"
+                borderWidth="025"
+                borderColor="border"
+                borderRadius="200"
+                background="bg-surface-secondary"
+              >
+                <InlineStack align="space-between" blockAlign="center">
+                  <InlineStack gap="200" blockAlign="center">
+                    <Icon source={AttachmentIcon} tone="subdued" />
+                    <BlockStack gap="050">
+                      <Text
+                        variant="bodySm"
+                        fontWeight="semibold"
+                        as="a"
+                        href={a.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {a.fileName}
+                      </Text>
+                      <Text variant="bodySm" tone="subdued">
+                        {fmtSize(a.fileSize)} · {new Date(a.uploadedAt).toLocaleDateString('en-MY', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </Text>
+                    </BlockStack>
+                  </InlineStack>
+                  <Button
+                    size="slim"
+                    tone="critical"
+                    icon={DeleteIcon}
+                    loading={deleteMutation.isPending && deleteMutation.variables === a.id}
+                    onClick={() => deleteMutation.mutate(a.id)}
+                    accessibilityLabel="Delete attachment"
+                  />
+                </InlineStack>
+              </Box>
+            ))}
+          </BlockStack>
+        )}
+      </BlockStack>
+    </Card>
   );
 }
 
