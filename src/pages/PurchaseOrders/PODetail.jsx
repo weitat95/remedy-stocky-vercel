@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Page, Layout, Card, IndexTable, Text, Badge, Button, Link,
   InlineStack, BlockStack, Banner, Spinner, Divider,
-  Box, InlineGrid, TextField, Icon,
+  Box, InlineGrid, TextField, Icon, Toast, Frame,
 } from '@shopify/polaris';
 import { AttachmentIcon, DeleteIcon } from '@shopify/polaris-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -13,10 +13,11 @@ import {
   archivePurchaseOrder,
   undoReceivePO,
   updatePurchaseOrder,
+  sendPOEmail,
 } from '../../api/purchaseOrders.js';
 import { getTaxRates } from '../../api/taxRates.js';
 import { getPOAttachments, uploadPOAttachment, deletePOAttachment } from '../../api/poAttachments.js';
-import { generatePOPdf } from '../../utils/generatePOPdf.js';
+import { downloadPOPdf, getPOPdfBase64 } from '../../utils/generatePOPdf.js';
 import POForm from './POForm.jsx';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -119,6 +120,7 @@ export default function PODetail() {
   const queryClient = useQueryClient();
   const [editMode, setEditMode] = useState(false);
   const [notes, setNotes] = useState(null); // { poNotes, supplierNotes } — null = not dirty
+  const [toast, setToast] = useState(null); // { message, error? }
 
   const { data: taxRates = [] } = useQuery({ queryKey: ['tax-rates'], queryFn: getTaxRates });
   const taxNameMap = Object.fromEntries(
@@ -159,6 +161,11 @@ export default function PODetail() {
   const saveNotesMutation = useMutation({
     mutationFn: (payload) => updatePurchaseOrder(id, payload),
     onSuccess: invalidate,
+  });
+  const sendMutation = useMutation({
+    mutationFn: (pdfBase64) => sendPOEmail(id, pdfBase64),
+    onSuccess: (data) => setToast({ message: `Sent to ${data.to}` }),
+    onError: (err) => setToast({ message: err.message || 'Failed to send', error: true }),
   });
 
   const handleSaveNotes = useCallback(() => {
@@ -214,6 +221,14 @@ export default function PODetail() {
   ];
 
   return (
+    <Frame>
+    {toast && (
+      <Toast
+        content={toast.message}
+        error={toast.error}
+        onDismiss={() => setToast(null)}
+      />
+    )}
     <Page
       title={`#${po.poNumber}`}
       titleMetadata={<Badge tone={statusTone(po.status)}>{statusLabel(po.status)}</Badge>}
@@ -221,9 +236,14 @@ export default function PODetail() {
       backAction={{ content: 'Purchase Orders', onAction: () => navigate('/purchase-orders') }}
       primaryAction={{ content: 'Edit', onAction: () => setEditMode(true) }}
       secondaryActions={[
-        { content: 'Download PDF', onAction: () => generatePOPdf(po) },
+        { content: 'Download PDF', onAction: () => downloadPOPdf(po) },
         { content: 'Download CSV', onAction: () => downloadCSV(po) },
-        { content: 'Send', onAction: () => {} },
+        {
+          content: sendMutation.isPending ? 'Sending…' : 'Send',
+          disabled: !po.supplier?.email || sendMutation.isPending,
+          helpText: !po.supplier?.email ? 'Supplier has no email address' : undefined,
+          onAction: () => sendMutation.mutate(getPOPdfBase64(po)),
+        },
       ]}
       actionGroups={[
         {
@@ -463,6 +483,7 @@ export default function PODetail() {
         </Layout.Section>
       </Layout>
     </Page>
+    </Frame>
   );
 }
 

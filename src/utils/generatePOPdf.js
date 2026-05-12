@@ -33,7 +33,7 @@ function computeTotals(po) {
   return { subtotal, tax, adjustments, shipping, total: subtotal + tax + adjustments + shipping };
 }
 
-export function generatePOPdf(po) {
+function buildPODoc(po) {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const pageW = 210;
   const mL = 14;
@@ -183,5 +183,13 @@ export function generatePOPdf(po) {
     doc.text(wrapped, mL, ty + 6);
   }
 
-  doc.save(`PO-${po.poNumber}.pdf`);
+  return doc;
+}
+
+export function downloadPOPdf(po) {
+  buildPODoc(po).save(`PO-${po.poNumber}.pdf`);
+}
+
+export function getPOPdfBase64(po) {
+  return buildPODoc(po).output('datauristring').split(',')[1];
 }

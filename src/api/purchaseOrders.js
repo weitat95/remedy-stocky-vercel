@@ -59,3 +59,8 @@ export async function receivePO(id, payload) {
   const res = await apiClient.post(`/purchase-orders/${id}/receive`, payload);
   return res.data.data;
 }
+
+export async function sendPOEmail(id, pdfBase64) {
+  const res = await apiClient.post(`/purchase-orders/${id}/send`, { pdfBase64 });
+  return res.data.data;
+}
