@@ -16,6 +16,7 @@ import {
 } from '../../api/purchaseOrders.js';
 import { getTaxRates } from '../../api/taxRates.js';
 import { getPOAttachments, uploadPOAttachment, deletePOAttachment } from '../../api/poAttachments.js';
+import { generatePOPdf } from '../../utils/generatePOPdf.js';
 import POForm from './POForm.jsx';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -220,6 +221,7 @@ export default function PODetail() {
       backAction={{ content: 'Purchase Orders', onAction: () => navigate('/purchase-orders') }}
       primaryAction={{ content: 'Edit', onAction: () => setEditMode(true) }}
       secondaryActions={[
+        { content: 'Download PDF', onAction: () => generatePOPdf(po) },
         { content: 'Download CSV', onAction: () => downloadCSV(po) },
         { content: 'Send', onAction: () => {} },
       ]}
