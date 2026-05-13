@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   Page, Layout, Card, FormLayout, TextField, Select, Checkbox,
   Button, InlineStack, BlockStack, Text, Divider, Banner,
@@ -9,6 +9,8 @@ import { getSuppliers, getSupplierVariants } from '../../api/suppliers.js';
 import { getLocations } from '../../api/inventory.js';
 import { getTaxRates } from '../../api/taxRates.js';
 import { createPurchaseOrder, updatePurchaseOrder } from '../../api/purchaseOrders.js';
+import { getProducts } from '../../api/products.js';
+import { parseCSV } from '../../utils/csv.js';
 
 const EMPTY_LINE_ITEM = {
   shopifyProductId: '',
@@ -73,6 +75,9 @@ export default function POForm({ onClose, existingPO }) {
       : [{ ...EMPTY_LINE_ITEM }]
   );
   const [formError, setFormError] = useState(null);
+  const csvFileRef = useRef(null);
+  const [csvImporting, setCsvImporting] = useState(false);
+  const [csvResult, setCsvResult] = useState(null); // { added, skipped, notFound[] }
 
   const { data: suppliers = [] } = useQuery({ queryKey: ['suppliers'], queryFn: getSuppliers });
   const { data: locationsRaw } = useQuery({ queryKey: ['locations'], queryFn: getLocations });
@@ -135,6 +140,97 @@ export default function POForm({ onClose, existingPO }) {
   const handleApplyTaxToAll = useCallback(() => {
     setLineItems((p) => p.map((item) => ({ ...item, taxRate: bulkTaxRate })));
   }, [bulkTaxRate]);
+
+  const handleCsvFileSelect = useCallback(async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setCsvImporting(true);
+    setCsvResult(null);
+    setFormError(null);
+    try {
+      const rows = parseCSV(await file.text());
+      if (rows.length === 0) { setFormError('CSV file is empty or has no data rows.'); return; }
+
+      const firstRow = rows[0];
+      const qtyKey = 'quantity' in firstRow ? 'quantity' : 'qty' in firstRow ? 'qty' : null;
+      if (!('sku' in firstRow) || !qtyKey) {
+        setFormError('CSV must have "sku" and "quantity" columns.');
+        return;
+      }
+
+      const lookups = await Promise.all(
+        rows.map(async (row) => {
+          const sku = row.sku?.trim();
+          if (!sku) return null;
+          const data = await getProducts({ search: sku, searchBy: 'sku', first: 1 });
+          const product = data.products?.[0];
+          if (!product) return { sku, found: false };
+          const variant = product.variants?.find((v) => v.sku === sku) ?? product.variants?.[0];
+          if (!variant) return { sku, found: false };
+
+          const costKey = ['cost_price', 'costprice', 'cost'].find((k) => k in row);
+          const retailKey = ['retail_price', 'retailprice', 'retail'].find((k) => k in row);
+          const supplierCodeKey = ['supplier_code', 'suppliercode'].find((k) => k in row);
+          const noteKey = ['text_note', 'textnote', 'note'].find((k) => k in row);
+          const taxKey = ['tax_rate', 'taxrate', 'tax'].find((k) => k in row);
+
+          return {
+            sku, found: true,
+            shopifyVariantId: variant.id,
+            shopifyProductId: product.id,
+            productTitle: product.title,
+            variantTitle: variant.title,
+            variantSku: variant.sku ?? '',
+            quantity: row[qtyKey]?.trim() ?? '',
+            costPrice: costKey ? (row[costKey]?.trim() ?? '') : '',
+            retailPrice: retailKey ? (row[retailKey]?.trim() ?? '') : '',
+            supplierCode: supplierCodeKey ? (row[supplierCodeKey]?.trim() ?? '') : '',
+            textNote: noteKey ? (row[noteKey]?.trim() ?? '') : '',
+            taxRate: taxKey ? (row[taxKey]?.trim() ?? '0') : '0',
+          };
+        })
+      );
+
+      let added = 0, skipped = 0;
+      const notFound = [];
+      const toAdd = [];
+      const existing = new Set(lineItems.map((li) => li.shopifyVariantId).filter(Boolean));
+
+      for (const r of lookups) {
+        if (!r) continue;
+        if (!r.found) { notFound.push(r.sku); continue; }
+        if (existing.has(r.shopifyVariantId)) { skipped++; continue; }
+        existing.add(r.shopifyVariantId);
+        toAdd.push({
+          shopifyVariantId: r.shopifyVariantId,
+          shopifyProductId: r.shopifyProductId,
+          productTitle: r.productTitle,
+          variantTitle: r.variantTitle,
+          sku: r.variantSku,
+          quantity: r.quantity,
+          costPrice: r.costPrice,
+          retailPrice: r.retailPrice,
+          supplierCode: r.supplierCode,
+          textNote: r.textNote,
+          taxRate: r.taxRate,
+        });
+        added++;
+      }
+
+      if (toAdd.length > 0) {
+        setLineItems((prev) => {
+          const cleaned = prev.filter((li) => li.shopifyVariantId || li.quantity);
+          return [...cleaned, ...toAdd];
+        });
+      }
+      setCsvResult({ added, skipped, notFound });
+    } catch (err) {
+      setFormError('CSV import failed: ' + err.message);
+    } finally {
+      setCsvImporting(false);
+    }
+  }, [lineItems]);
 
   const handleSubmit = useCallback(() => {
     setFormError(null);
@@ -284,10 +380,33 @@ export default function POForm({ onClose, existingPO }) {
                       />
                     </div>
                     <Button size="slim" onClick={handleApplyTaxToAll}>Apply</Button>
+                    <Button size="slim" loading={csvImporting} onClick={() => csvFileRef.current?.click()}>Import CSV</Button>
                     <Button onClick={handleAddLineItem} size="slim">Add Item</Button>
                   </InlineStack>
                 )}
               </InlineStack>
+
+              {!isEditing && (
+                <input
+                  ref={csvFileRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  style={{ display: 'none' }}
+                  onChange={handleCsvFileSelect}
+                />
+              )}
+
+              {csvResult && (
+                <Banner
+                  tone={csvResult.notFound.length > 0 ? 'warning' : 'success'}
+                  onDismiss={() => setCsvResult(null)}
+                >
+                  {csvResult.added} item{csvResult.added !== 1 ? 's' : ''} imported
+                  {csvResult.skipped > 0 && `, ${csvResult.skipped} duplicate${csvResult.skipped !== 1 ? 's' : ''} skipped`}
+                  {csvResult.notFound.length > 0 && `. SKUs not found: ${csvResult.notFound.join(', ')}`}
+                </Banner>
+              )}
+
               <Divider />
 
               {lineItems.map((item, index) => (
