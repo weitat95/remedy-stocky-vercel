@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Page, Layout, Card, IndexTable, Text, Badge, Button, Link,
   InlineStack, BlockStack, Banner, Spinner, Divider,
-  Box, InlineGrid, TextField, Icon, Toast, Frame,
+  Box, InlineGrid, TextField, Icon, Toast, Frame, Modal, Checkbox,
 } from '@shopify/polaris';
 import { AttachmentIcon, DeleteIcon } from '@shopify/polaris-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -17,7 +17,7 @@ import {
 } from '../../api/purchaseOrders.js';
 import { getTaxRates } from '../../api/taxRates.js';
 import { getPOAttachments, uploadPOAttachment, deletePOAttachment } from '../../api/poAttachments.js';
-import { downloadPOPdf, getPOPdfBase64 } from '../../utils/generatePOPdf.js';
+import { downloadPOPdf, getPOPdfBase64, PDF_COLUMNS, PDF_SECTIONS, DEFAULT_PDF_CONFIG } from '../../utils/generatePOPdf.js';
 import POForm from './POForm.jsx';
 import POReceive from './POReceive.jsx';
 
@@ -123,6 +123,8 @@ export default function PODetail() {
   const [receiveMode, setReceiveMode] = useState(false);
   const [notes, setNotes] = useState(null); // { poNotes, supplierNotes } — null = not dirty
   const [toast, setToast] = useState(null); // { message, error? }
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const [pdfConfig, setPdfConfig] = useState(DEFAULT_PDF_CONFIG);
 
   const { data: taxRates = [] } = useQuery({ queryKey: ['tax-rates'], queryFn: getTaxRates });
   const taxNameMap = Object.fromEntries(
@@ -257,13 +259,13 @@ export default function PODetail() {
           : { content: 'Edit', onAction: () => setEditMode(true) }
       }
       secondaryActions={[
-        { content: 'Download PDF', onAction: () => downloadPOPdf(po) },
+        { content: 'Download PDF', onAction: () => setPdfModalOpen(true) },
         { content: 'Download CSV', onAction: () => downloadCSV(po) },
         {
           content: sendMutation.isPending ? 'Sending…' : 'Send',
           disabled: !po.supplier?.email || sendMutation.isPending,
           helpText: !po.supplier?.email ? 'Supplier has no email address' : undefined,
-          onAction: () => sendMutation.mutate(getPOPdfBase64(po)),
+          onAction: () => sendMutation.mutate(getPOPdfBase64(po, pdfConfig)),
         },
       ]}
       actionGroups={[
@@ -505,6 +507,45 @@ export default function PODetail() {
         </Layout.Section>
       </Layout>
     </Page>
+
+    <Modal
+      open={pdfModalOpen}
+      onClose={() => setPdfModalOpen(false)}
+      title="Download PDF"
+      primaryAction={{
+        content: 'Download',
+        onAction: () => { downloadPOPdf(po, pdfConfig); setPdfModalOpen(false); },
+      }}
+      secondaryActions={[{ content: 'Cancel', onAction: () => setPdfModalOpen(false) }]}
+    >
+      <Modal.Section>
+        <BlockStack gap="300">
+          <Text variant="headingSm" as="h3">Line item columns</Text>
+          {PDF_COLUMNS.map((col) => (
+            <Checkbox
+              key={col.key}
+              label={col.label}
+              checked={pdfConfig[col.key] !== false}
+              onChange={(v) => setPdfConfig((c) => ({ ...c, [col.key]: v }))}
+            />
+          ))}
+        </BlockStack>
+      </Modal.Section>
+      <Modal.Section>
+        <BlockStack gap="300">
+          <Text variant="headingSm" as="h3">Sections</Text>
+          {PDF_SECTIONS.map((sec) => (
+            <Checkbox
+              key={sec.key}
+              label={sec.label}
+              checked={pdfConfig[sec.key] !== false}
+              onChange={(v) => setPdfConfig((c) => ({ ...c, [sec.key]: v }))}
+            />
+          ))}
+        </BlockStack>
+      </Modal.Section>
+    </Modal>
+
     </Frame>
   );
 }
