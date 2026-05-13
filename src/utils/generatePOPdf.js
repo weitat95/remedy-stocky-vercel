@@ -13,7 +13,7 @@ const STORE_EMAIL   = import.meta.env.VITE_STORE_EMAIL           || '';
 export const PDF_COLUMNS = [
   { key: 'sku',      label: 'SKU',      width: 32, align: 'left'  },
   { key: 'received', label: 'Received', width: 35, align: 'left'  },
-  { key: 'qty',      label: 'QTY',      width: 10, align: 'right' },
+  { key: 'qty',      label: 'QTY',      width: 14, align: 'right' },
   { key: 'cost',     label: 'Cost',     width: 16, align: 'right' },
   { key: 'total',    label: 'Total',    width: 18, align: 'right' },
 ];

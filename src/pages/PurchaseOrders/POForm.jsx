@@ -10,7 +10,14 @@ import { getLocations } from '../../api/inventory.js';
 import { getTaxRates } from '../../api/taxRates.js';
 import { createPurchaseOrder, updatePurchaseOrder } from '../../api/purchaseOrders.js';
 import { getProducts } from '../../api/products.js';
-import { parseCSV } from '../../utils/csv.js';
+import { parseCSV, downloadCSVFile } from '../../utils/csv.js';
+
+const PO_CSV_EXAMPLE = [
+  ['sku', 'quantity', 'cost_price', 'retail_price', 'supplier_code', 'tax_rate', 'note'],
+  ['SKU-001', '10', '25.00', '49.90', 'SUP-001', '0', ''],
+  ['SKU-002', '5', '80.00', '149.00', 'SUP-002', '10', 'Handle with care'],
+  ['SKU-003', '20', '12.50', '29.90', '', '6', ''],
+];
 
 const EMPTY_LINE_ITEM = {
   shopifyProductId: '',
@@ -381,6 +388,7 @@ export default function POForm({ onClose, existingPO }) {
                     </div>
                     <Button size="slim" onClick={handleApplyTaxToAll}>Apply</Button>
                     <Button size="slim" loading={csvImporting} onClick={() => csvFileRef.current?.click()}>Import CSV</Button>
+                    <Button size="slim" variant="plain" onClick={() => downloadCSVFile('po-import-example.csv', PO_CSV_EXAMPLE)}>Download example</Button>
                     <Button onClick={handleAddLineItem} size="slim">Add Item</Button>
                   </InlineStack>
                 )}

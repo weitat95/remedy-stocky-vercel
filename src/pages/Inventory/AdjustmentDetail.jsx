@@ -15,7 +15,14 @@ import {
 import { getLocations } from '../../api/inventory.js';
 import { getProducts } from '../../api/products.js';
 import { getAdjustmentReasons } from '../../api/adjustmentReasons.js';
-import { parseCSV } from '../../utils/csv.js';
+import { parseCSV, downloadCSVFile } from '../../utils/csv.js';
+
+const ADJUSTMENT_CSV_EXAMPLE = [
+  ['sku', 'adjustment'],
+  ['SKU-001', '5'],
+  ['SKU-002', '-3'],
+  ['SKU-003', '10'],
+];
 
 const ALL_COLUMNS = [
   { id: 'product', title: 'Product' },
@@ -420,14 +427,23 @@ export default function AdjustmentDetail() {
                       style={{ display: 'none' }}
                       onChange={handleCsvFileSelect}
                     />
-                    <Button
-                      icon={ImportIcon}
-                      size="slim"
-                      loading={csvImporting}
-                      onClick={() => csvFileRef.current?.click()}
-                    >
-                      Import CSV
-                    </Button>
+                    <InlineStack gap="200" blockAlign="center">
+                      <Button
+                        icon={ImportIcon}
+                        size="slim"
+                        loading={csvImporting}
+                        onClick={() => csvFileRef.current?.click()}
+                      >
+                        Import CSV
+                      </Button>
+                      <Button
+                        size="slim"
+                        variant="plain"
+                        onClick={() => downloadCSVFile('adjustment-import-example.csv', ADJUSTMENT_CSV_EXAMPLE)}
+                      >
+                        Download example
+                      </Button>
+                    </InlineStack>
                   </>
                 )}
                 {isArchived && <span />}

@@ -32,7 +32,14 @@ import {
 } from '../../api/transfers.js';
 import { getLocations } from '../../api/inventory.js';
 import { getProducts } from '../../api/products.js';
-import { parseCSV } from '../../utils/csv.js';
+import { parseCSV, downloadCSVFile } from '../../utils/csv.js';
+
+const TRANSFER_CSV_EXAMPLE = [
+  ['sku', 'quantity'],
+  ['SKU-001', '10'],
+  ['SKU-002', '5'],
+  ['SKU-003', '20'],
+];
 
 function statusTone(status) {
   switch (status) {
@@ -403,17 +410,23 @@ export default function Transfers() {
               style={{ display: 'none' }}
               onChange={handleCsvFileSelect}
             />
-            <Button
-              icon={ImportIcon}
-              size="slim"
-              loading={csvImporting}
-              onClick={() => csvFileRef.current?.click()}
-            >
-              Import line items from CSV
-            </Button>
-            <div style={{ marginTop: '4px' }}>
-              <Text variant="bodySm" tone="subdued">CSV format: sku, quantity</Text>
-            </div>
+            <InlineStack gap="200" blockAlign="center">
+              <Button
+                icon={ImportIcon}
+                size="slim"
+                loading={csvImporting}
+                onClick={() => csvFileRef.current?.click()}
+              >
+                Import line items from CSV
+              </Button>
+              <Button
+                size="slim"
+                variant="plain"
+                onClick={() => downloadCSVFile('transfer-import-example.csv', TRANSFER_CSV_EXAMPLE)}
+              >
+                Download example
+              </Button>
+            </InlineStack>
           </div>
         </Modal.Section>
 
