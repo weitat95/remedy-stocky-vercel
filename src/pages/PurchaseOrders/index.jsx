@@ -77,6 +77,7 @@ export default function PurchaseOrders() {
   const [showForm, setShowForm] = useState(false);
   const [editingPO, setEditingPO] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const { data: orders = [], isLoading, error } = useQuery({
     queryKey: ['purchase-orders', showArchived],
@@ -146,6 +147,20 @@ export default function PurchaseOrders() {
   }, [invalidate]);
 
   const today = useMemo(() => new Date(), []);
+
+  const filteredOrders = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return orders;
+    return orders.filter((po) => {
+      const num = String(po.poNumber || '');
+      return (
+        num.includes(q) ||
+        (po.supplier?.name || '').toLowerCase().includes(q) ||
+        (po.invoiceNo || '').toLowerCase().includes(q) ||
+        (po.orderNo || '').toLowerCase().includes(q)
+      );
+    });
+  }, [orders, searchQuery]);
 
   // Stats
   const stats = useMemo(() => {
@@ -262,20 +277,30 @@ export default function PurchaseOrders() {
         {/* Table */}
         <Layout.Section>
           <Card padding="0">
+            <Box padding="300" paddingBlockEnd="0">
+              <TextField
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search by #, supplier, invoice, or order no."
+                autoComplete="off"
+                clearButton
+                onClearButtonClick={() => setSearchQuery('')}
+              />
+            </Box>
             {isLoading ? (
               <Box padding="400"><InlineStack align="center"><Spinner /></InlineStack></Box>
-            ) : orders.length === 0 ? (
-              <EmptyState heading="No purchase orders" action={{ content: 'Create PO', onAction: handleCreate }} image="">
-                <p>Create a purchase order to track incoming inventory.</p>
+            ) : filteredOrders.length === 0 ? (
+              <EmptyState heading={orders.length === 0 ? 'No purchase orders' : 'No results'} action={orders.length === 0 ? { content: 'Create PO', onAction: handleCreate } : undefined} image="">
+                <p>{orders.length === 0 ? 'Create a purchase order to track incoming inventory.' : 'Try a different search.'}</p>
               </EmptyState>
             ) : (
               <IndexTable
                 resourceName={{ singular: 'order', plural: 'orders' }}
-                itemCount={orders.length}
+                itemCount={filteredOrders.length}
                 headings={headings}
                 selectable={false}
               >
-                {orders.map((po, index) => {
+                {filteredOrders.map((po, index) => {
                   const isDraft = po.status === 'draft';
                   const canDelete = isDraft || po.archived;
                   const total = (po.lineItems || []).reduce((s, li) => s + li.quantity, 0);
