@@ -1,6 +1,7 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { Frame, Navigation, TopBar } from '@shopify/polaris';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   HomeIcon,
   PersonIcon,
@@ -15,6 +16,8 @@ import {
   StoreIcon,
 } from '@shopify/polaris-icons';
 
+import { getMe, logout as logoutApi } from './api/auth.js';
+import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard/index.jsx';
 import Vendors from './pages/Vendors/index.jsx';
 import VendorDetail from './pages/Vendors/VendorDetail.jsx';
@@ -33,9 +36,37 @@ import Reports from './pages/Reports/index.jsx';
 export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
+  const queryClient = useQueryClient();
   const [mobileNavActive, setMobileNavActive] = useState(false);
+  const [userMenuActive, setUserMenuActive] = useState(false);
+
+  // Session check — GET /auth/me returns 401 if the httpOnly cookie is missing/expired.
+  const { data: session, isLoading: sessionLoading } = useQuery({
+    queryKey: ['auth-me'],
+    queryFn: getMe,
+    retry: false,
+    staleTime: Infinity,
+  });
+
+  // Any API call (not just this one) that gets a 401 mid-session should drop back to Login.
+  useEffect(() => {
+    const onUnauthorized = () => queryClient.setQueryData(['auth-me'], null);
+    window.addEventListener('auth:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('auth:unauthorized', onUnauthorized);
+  }, [queryClient]);
+
+  const handleLoginSuccess = useCallback(
+    (user) => queryClient.setQueryData(['auth-me'], { user }),
+    [queryClient]
+  );
+
+  const handleLogout = useCallback(async () => {
+    await logoutApi();
+    queryClient.setQueryData(['auth-me'], null);
+  }, [queryClient]);
 
   const toggleMobileNav = useCallback(() => setMobileNavActive((v) => !v), []);
+  const toggleUserMenu = useCallback(() => setUserMenuActive((v) => !v), []);
   const is = (path) =>
     path === '/' ? location.pathname === '/' : location.pathname.startsWith(path);
 
@@ -170,8 +201,25 @@ export default function App() {
     </Navigation>
   );
 
+  if (sessionLoading) return null;
+  if (!session) return <Login onLoginSuccess={handleLoginSuccess} />;
+
+  const userMenuMarkup = (
+    <TopBar.UserMenu
+      actions={[{ items: [{ content: 'Log out', onAction: handleLogout }] }]}
+      name={session.user || 'Admin'}
+      initials={(session.user || 'A').charAt(0).toUpperCase()}
+      open={userMenuActive}
+      onToggle={toggleUserMenu}
+    />
+  );
+
   const topBarMarkup = (
-    <TopBar showNavigationToggle onNavigationToggle={toggleMobileNav} />
+    <TopBar
+      showNavigationToggle
+      onNavigationToggle={toggleMobileNav}
+      userMenu={userMenuMarkup}
+    />
   );
 
   return (

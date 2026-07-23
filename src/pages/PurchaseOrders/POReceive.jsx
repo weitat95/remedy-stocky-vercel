@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
   Page, Layout, Card, IndexTable, Text, Button, Select,
   InlineStack, BlockStack, Banner, Spinner, Divider, Box,
@@ -37,6 +37,31 @@ export default function POReceive({ po, onClose, onSuccess }) {
     }))
   );
 
+  // After a failed receive, some items in the batch may have already been applied
+  // (the backend fails fast and persists each item as it succeeds). Once the
+  // po-detail refetch below lands, resync rows from the corrected server state so a
+  // retry only resends what's actually still outstanding — never the same quantity
+  // twice against Shopify.
+  const needsResyncRef = useRef(false);
+  useEffect(() => {
+    if (!needsResyncRef.current) return;
+    needsResyncRef.current = false;
+    setRows(
+      receivableItems.map((li) => ({
+        id: li.id,
+        inventoryItemId: li.inventoryItemId,
+        productTitle: li.productTitle,
+        variantTitle: li.variantTitle,
+        sku: li.sku,
+        quantity: li.quantity,
+        quantityReceived: li.quantityReceived,
+        remaining: li.quantity - li.quantityReceived,
+        toReceive: li.quantity - li.quantityReceived,
+        checked: true,
+      }))
+    );
+  }, [receivableItems]);
+
   const locationOptions = (po.locations || []).map((l) => ({ label: l.name, value: l.id }));
 
   const allChecked = rows.every((r) => r.checked);
@@ -70,6 +95,11 @@ export default function POReceive({ po, onClose, onSuccess }) {
       queryClient.invalidateQueries({ queryKey: ['purchase-orders'] });
       queryClient.invalidateQueries({ queryKey: ['po-detail', po.id] });
       onSuccess?.();
+    },
+    onError: () => {
+      needsResyncRef.current = true;
+      queryClient.invalidateQueries({ queryKey: ['purchase-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['po-detail', po.id] });
     },
   });
 
