@@ -133,6 +133,12 @@ export default function Products() {
     });
   }, [locations]);
 
+  const setAllLocationsVisible = useCallback((allVisible) => {
+    const next = new Set(allVisible ? locations.map((l) => l.id) : []);
+    localStorage.setItem(VISIBLE_LOCATIONS_STORAGE_KEY, JSON.stringify([...next]));
+    setVisibleLocationIds(next);
+  }, [locations]);
+
   function locationQty(variant, locationId) {
     const qty = variant.inventoryByLocation?.[locationId];
     return qty === undefined ? null : qty;
@@ -465,8 +471,28 @@ export default function Products() {
         primaryAction={{ content: 'Done', onAction: () => setColumnsModalOpen(false) }}
       >
         <Modal.Section>
-          <BlockStack gap="200">
-            <Text tone="subdued">Choose which location inventory levels to show as columns.</Text>
+          <BlockStack gap="300">
+            <BlockStack gap="200">
+              <Text tone="subdued">Choose which location inventory levels to show as columns.</Text>
+              <InlineStack gap="200">
+                <Button
+                  variant="plain"
+                  size="slim"
+                  onClick={() => setAllLocationsVisible(true)}
+                  disabled={visibleLocations.length === locations.length}
+                >
+                  Select all
+                </Button>
+                <Button
+                  variant="plain"
+                  size="slim"
+                  onClick={() => setAllLocationsVisible(false)}
+                  disabled={visibleLocations.length === 0}
+                >
+                  Deselect all
+                </Button>
+              </InlineStack>
+            </BlockStack>
             {locations.map((loc) => (
               <Checkbox
                 key={loc.id}
