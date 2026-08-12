@@ -3,11 +3,14 @@ import {
   Page, Layout, Card, IndexTable, Text, Badge, Button, Thumbnail,
   InlineStack, BlockStack, Banner, Spinner, Pagination, Box,
   TextField, Select, Tabs, Modal, DropZone, Icon, Link,
-  InlineGrid,
+  InlineGrid, Checkbox,
 } from '@shopify/polaris';
 import { SearchIcon, ExternalIcon, ChevronDownIcon, ChevronUpIcon } from '@shopify/polaris-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getProducts, importVariantMeta } from '../../api/products.js';
+import { getLocations } from '../../api/inventory.js';
+
+const VISIBLE_LOCATIONS_STORAGE_KEY = 'productsVisibleLocationIds';
 
 const SEARCH_BY_OPTIONS = [
   { label: 'Title', value: 'title' },
@@ -101,6 +104,50 @@ export default function Products() {
   const pageInfo = data?.pageInfo ?? {};
   const shopifyAdminBase = data?.shopifyAdminBase ?? '';
 
+  // ── Location columns ─────────────────────────────────────────────────────
+  const { data: locationsData } = useQuery({
+    queryKey: ['locations'],
+    queryFn: getLocations,
+  });
+  const locations = locationsData?.data ?? [];
+
+  const [visibleLocationIds, setVisibleLocationIds] = useState(() => {
+    try {
+      const stored = localStorage.getItem(VISIBLE_LOCATIONS_STORAGE_KEY);
+      return stored ? new Set(JSON.parse(stored)) : null; // null = "show all" (no preference saved yet)
+    } catch {
+      return null;
+    }
+  });
+  const visibleLocations = visibleLocationIds
+    ? locations.filter((l) => visibleLocationIds.has(l.id))
+    : locations;
+
+  const [columnsModalOpen, setColumnsModalOpen] = useState(false);
+  const toggleLocationVisible = useCallback((locationId, checked) => {
+    setVisibleLocationIds((prev) => {
+      const next = new Set(prev ?? locations.map((l) => l.id));
+      checked ? next.add(locationId) : next.delete(locationId);
+      localStorage.setItem(VISIBLE_LOCATIONS_STORAGE_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  }, [locations]);
+
+  function locationQty(variant, locationId) {
+    const qty = variant.inventoryByLocation?.[locationId];
+    return qty === undefined ? null : qty;
+  }
+
+  function productLocationQty(product, locationId) {
+    // Sum across variants for the collapsed product row; null if not tracked anywhere
+    let total = null;
+    for (const variant of product.variants) {
+      const qty = locationQty(variant, locationId);
+      if (qty !== null) total = (total ?? 0) + qty;
+    }
+    return total;
+  }
+
   // ── CSV import modal ──────────────────────────────────────────────────────
   const [importOpen, setImportOpen] = useState(false);
   const [importError, setImportError] = useState(null);
@@ -161,11 +208,13 @@ export default function Products() {
     { id: 'sku', title: 'SKU' },
     { id: 'vendor', title: 'Vendor' },
     { id: 'supplier', title: 'Supplier' },
+    ...visibleLocations.map((loc) => ({ id: `loc-${loc.id}`, title: loc.name, alignment: 'end' })),
     { id: 'shopify-link', title: '' },
   ];
 
   return (
     <Page
+      fullWidth
       title="Products"
       subtitle="Synced from Shopify"
       primaryAction={{
@@ -175,6 +224,7 @@ export default function Products() {
         disabled: !shopifyAdminBase,
       }}
       secondaryActions={[
+        { content: 'Columns', onAction: () => setColumnsModalOpen(true), disabled: !locations.length },
         { content: 'Import CSV', onAction: handleOpenImport },
       ]}
     >
@@ -288,6 +338,20 @@ export default function Products() {
                           )}
                         </IndexTable.Cell>
 
+                        {/* Location quantities */}
+                        {visibleLocations.map((loc) => {
+                          const qty = singleVariant
+                            ? locationQty(singleVariant, loc.id)
+                            : productLocationQty(product, loc.id);
+                          return (
+                            <IndexTable.Cell key={loc.id}>
+                              <Text alignment="end" as="span" tone={qty === null ? 'subdued' : undefined}>
+                                {qty === null ? '—' : qty}
+                              </Text>
+                            </IndexTable.Cell>
+                          );
+                        })}
+
                         {/* Shopify link */}
                         <IndexTable.Cell>
                           {shopifyAdminBase && (
@@ -319,6 +383,16 @@ export default function Products() {
                           </IndexTable.Cell>
                           <IndexTable.Cell />
                           <IndexTable.Cell />
+                          {visibleLocations.map((loc) => {
+                            const qty = locationQty(variant, loc.id);
+                            return (
+                              <IndexTable.Cell key={loc.id}>
+                                <Text alignment="end" as="span" tone={qty === null ? 'subdued' : undefined}>
+                                  {qty === null ? '—' : qty}
+                                </Text>
+                              </IndexTable.Cell>
+                            );
+                          })}
                           <IndexTable.Cell />
                         </IndexTable.Row>
                       ))}
@@ -379,6 +453,28 @@ export default function Products() {
                 />
               </DropZone>
             )}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* ── Location columns modal ───────────────────────────────────────── */}
+      <Modal
+        open={columnsModalOpen}
+        onClose={() => setColumnsModalOpen(false)}
+        title="Location columns"
+        primaryAction={{ content: 'Done', onAction: () => setColumnsModalOpen(false) }}
+      >
+        <Modal.Section>
+          <BlockStack gap="200">
+            <Text tone="subdued">Choose which location inventory levels to show as columns.</Text>
+            {locations.map((loc) => (
+              <Checkbox
+                key={loc.id}
+                label={loc.name}
+                checked={visibleLocations.some((l) => l.id === loc.id)}
+                onChange={(checked) => toggleLocationVisible(loc.id, checked)}
+              />
+            ))}
           </BlockStack>
         </Modal.Section>
       </Modal>
