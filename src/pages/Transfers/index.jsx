@@ -29,6 +29,7 @@ import {
   createTransfer,
   confirmTransfer,
   deleteTransfer,
+  reverseTransfer,
 } from '../../api/transfers.js';
 import { getLocations } from '../../api/inventory.js';
 import { getProducts } from '../../api/products.js';
@@ -57,6 +58,7 @@ export default function Transfers() {
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
   const [formError, setFormError] = useState(null);
+  const [reversePreview, setReversePreview] = useState(null); // transfer being reversed
 
   // Form state
   const [fromLocationId, setFromLocationId] = useState('');
@@ -184,6 +186,7 @@ export default function Transfers() {
     { label: 'Select location…', value: '' },
     ...((locationsRaw?.data ?? []).map((l) => ({ label: l.name, value: l.id }))),
   ];
+  const locationName = (id) => (locationsRaw?.data ?? []).find((l) => l.id === id)?.name ?? id;
 
   const createMutation = useMutation({
     mutationFn: createTransfer,
@@ -205,6 +208,19 @@ export default function Transfers() {
     mutationFn: deleteTransfer,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transfers'] });
+    },
+  });
+
+  const [reverseError, setReverseError] = useState(null);
+  const reverseMutation = useMutation({
+    mutationFn: (id) => reverseTransfer(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transfers'] });
+      setReversePreview(null);
+    },
+    onError: (err) => {
+      setReversePreview(null);
+      setReverseError(err.message);
     },
   });
 
@@ -280,6 +296,13 @@ export default function Transfers() {
             </Banner>
           </Layout.Section>
         )}
+        {reverseError && (
+          <Layout.Section>
+            <Banner tone="critical" title="Failed to reverse transfer" onDismiss={() => setReverseError(null)}>
+              <p>{reverseError}</p>
+            </Banner>
+          </Layout.Section>
+        )}
 
         <Layout.Section>
           <Card padding="0">
@@ -322,6 +345,8 @@ export default function Transfers() {
                       <Badge tone={statusTone(transfer.status)}>
                         {transfer.status.replace('_', ' ')}
                       </Badge>
+                      {transfer.reversalOf && <Badge tone="info">Reversal</Badge>}
+                      {transfer.reversal && <Badge tone="attention">Reversed</Badge>}
                       {(transfer.status === 'pending' || transfer.status === 'in_transit') && (
                         <InlineStack gap="200">
                           <Button
@@ -349,6 +374,14 @@ export default function Transfers() {
                             </Button>
                           )}
                         </InlineStack>
+                      )}
+                      {transfer.status === 'received' && !transfer.reversal && (
+                        <Button
+                          size="slim"
+                          onClick={() => setReversePreview(transfer)}
+                        >
+                          Reverse
+                        </Button>
                       )}
                     </InlineStack>
                   </InlineStack>
@@ -491,6 +524,45 @@ export default function Transfers() {
             }
           />
         </Modal.Section>
+      </Modal>
+
+      {/* ── Reverse confirmation ─────────────────────────────────────────── */}
+      <Modal
+        open={!!reversePreview}
+        onClose={() => setReversePreview(null)}
+        title="Reverse Transfer"
+        primaryAction={{
+          content: 'Confirm reversal',
+          destructive: true,
+          onAction: () => reverseMutation.mutate(reversePreview.id),
+          loading: reverseMutation.isPending,
+        }}
+        secondaryActions={[{
+          content: 'Cancel',
+          onAction: () => setReversePreview(null),
+          disabled: reverseMutation.isPending,
+        }]}
+      >
+        {reversePreview && (
+          <Modal.Section>
+            <BlockStack gap="400">
+              <Text>
+                This creates a new transfer moving inventory back from{' '}
+                <Text as="span" fontWeight="semibold">{locationName(reversePreview.toLocationId)}</Text> to{' '}
+                <Text as="span" fontWeight="semibold">{locationName(reversePreview.fromLocationId)}</Text>,
+                and posts it to Shopify immediately.
+              </Text>
+              <BlockStack gap="200">
+                {reversePreview.lineItems.map((li) => (
+                  <InlineStack key={li.id} align="space-between" blockAlign="center">
+                    <Text variant="bodySm" tone="subdued">{li.shopifyVariantId}</Text>
+                    <Text variant="bodyMd" fontWeight="semibold">{li.quantity}</Text>
+                  </InlineStack>
+                ))}
+              </BlockStack>
+            </BlockStack>
+          </Modal.Section>
+        )}
       </Modal>
     </Page>
   );

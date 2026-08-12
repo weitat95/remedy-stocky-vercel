@@ -1,8 +1,8 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   Page, Layout, Card, FormLayout, Select, TextField, Button, Banner,
-  IndexTable, Text, InlineStack, BlockStack, Box, Spinner, Badge,
-  Autocomplete, Icon, Popover, ActionList, Divider, Checkbox,
+  IndexTable, Text, InlineStack, BlockStack, Box, Spinner, Badge, Link,
+  Autocomplete, Icon, Popover, ActionList, Divider, Checkbox, Modal,
 } from '@shopify/polaris';
 import { SearchIcon, DeleteIcon, SettingsIcon, ImportIcon } from '@shopify/polaris-icons';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -10,7 +10,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getAdjustment, createAdjustment, updateAdjustment,
   saveAdjustment, archiveAdjustment, deleteAdjustment,
-  getInventoryLevel,
+  reverseAdjustment, getInventoryLevel,
 } from '../../api/adjustments.js';
 import { getLocations } from '../../api/inventory.js';
 import { getProducts } from '../../api/products.js';
@@ -304,6 +304,20 @@ export default function AdjustmentDetail() {
     onError: (e) => setSaveError(e.message),
   });
 
+  const reverseMutation = useMutation({
+    mutationFn: () => reverseAdjustment(id),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['adjustments'] });
+      queryClient.invalidateQueries({ queryKey: ['adjustment', id] });
+      setReverseModalOpen(false);
+      navigate(`/inventory/adjustments/${data.id}`);
+    },
+    onError: (e) => {
+      setReverseModalOpen(false);
+      setSaveError(e.message);
+    },
+  });
+
   const handleSaveDraft = useCallback(() => {
     setSaveError(null);
     draftMutation.mutate(buildBody());
@@ -318,6 +332,9 @@ export default function AdjustmentDetail() {
       saveMutation.mutate(buildBody());
     }
   }, [isNew, buildBody, createMutation, saveMutation]);
+
+  // ── Reverse confirmation ─────────────────────────────────────────────────
+  const [reverseModalOpen, setReverseModalOpen] = useState(false);
 
   // ── More actions popover ──────────────────────────────────────────────────
   const [moreOpen, setMoreOpen] = useState(false);
@@ -371,7 +388,10 @@ export default function AdjustmentDetail() {
         ...(isArchived ? [{
           content: 'Download CSV',
           onAction: () => downloadCSV(existing, existing.lineItems, locationName),
-        }] : [{
+        }, ...(!existing?.reversal ? [{
+          content: 'Reverse',
+          onAction: () => setReverseModalOpen(true),
+        }] : [])] : [{
           content: 'Save Draft',
           onAction: handleSaveDraft,
           loading: draftMutation.isPending,
@@ -396,6 +416,26 @@ export default function AdjustmentDetail() {
         {saveError && (
           <Layout.Section>
             <Banner tone="critical" onDismiss={() => setSaveError(null)}>{saveError}</Banner>
+          </Layout.Section>
+        )}
+        {existing?.reversalOf && (
+          <Layout.Section>
+            <Banner tone="info">
+              This is a reversal of{' '}
+              <Link onClick={() => navigate(`/inventory/adjustments/${existing.reversalOf.id}`)}>
+                Adjustment #{existing.reversalOf.adjNumber}
+              </Link>.
+            </Banner>
+          </Layout.Section>
+        )}
+        {existing?.reversal && (
+          <Layout.Section>
+            <Banner tone="warning">
+              This adjustment was reversed by{' '}
+              <Link onClick={() => navigate(`/inventory/adjustments/${existing.reversal.id}`)}>
+                Adjustment #{existing.reversal.adjNumber}
+              </Link>.
+            </Banner>
           </Layout.Section>
         )}
         {csvResult && (
@@ -651,6 +691,67 @@ export default function AdjustmentDetail() {
           </Card>
         </Layout.Section>
       </Layout>
+
+      {/* ── Reverse confirmation ─────────────────────────────────────────── */}
+      <Modal
+        open={reverseModalOpen}
+        onClose={() => setReverseModalOpen(false)}
+        title={`Reverse Adjustment #${existing?.adjNumber ?? ''}`}
+        primaryAction={{
+          content: 'Confirm reversal',
+          destructive: true,
+          onAction: () => reverseMutation.mutate(),
+          loading: reverseMutation.isPending,
+        }}
+        secondaryActions={[{
+          content: 'Cancel',
+          onAction: () => setReverseModalOpen(false),
+          disabled: reverseMutation.isPending,
+        }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <Text>
+              This creates a new adjustment at <Text as="span" fontWeight="semibold">{locationName}</Text>{' '}
+              that applies the opposite of every line item below, and posts it to Shopify immediately.
+            </Text>
+            <BlockStack gap="300">
+              {existing?.lineItems?.map((li) => (
+                <InlineStack key={li.id} align="space-between" blockAlign="center" gap="300">
+                  <BlockStack gap="050">
+                    <Text variant="bodyMd" fontWeight="semibold">
+                      {li.productTitle}{li.variantTitle ? ` — ${li.variantTitle}` : ''}
+                    </Text>
+                    <Text variant="bodySm" tone="subdued">{li.sku || li.shopifyVariantId}</Text>
+                  </BlockStack>
+                  <InlineStack gap="300" blockAlign="center">
+                    <BlockStack gap="050" inlineAlign="center">
+                      <Text variant="bodySm" tone="subdued" alignment="end">Current</Text>
+                      <OldQtyCell
+                        inventoryItemId={li.inventoryItemId}
+                        locationId={existing.locationId}
+                        storedQty={null}
+                        isArchived={false}
+                      />
+                    </BlockStack>
+                    <Text tone="subdued">→</Text>
+                    <BlockStack gap="050" inlineAlign="center">
+                      <Text variant="bodySm" tone="subdued" alignment="end">After reversal</Text>
+                      <NewQtyCell
+                        inventoryItemId={li.inventoryItemId}
+                        locationId={existing.locationId}
+                        storedQty={null}
+                        isArchived={false}
+                        delta={-li.delta}
+                      />
+                    </BlockStack>
+                  </InlineStack>
+                </InlineStack>
+              ))}
+            </BlockStack>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }

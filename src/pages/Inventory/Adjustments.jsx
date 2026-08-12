@@ -179,7 +179,11 @@ export default function Adjustments() {
                     </IndexTable.Cell>
 
                     <IndexTable.Cell>
-                      <Text>{REASON_LABELS[adj.reason] ?? adj.reason}</Text>
+                      <InlineStack gap="150" blockAlign="center">
+                        <Text>{REASON_LABELS[adj.reason] ?? adj.reason}</Text>
+                        {adj.reversalOf && <Badge tone="info" size="small">Reversal of #{adj.reversalOf.adjNumber}</Badge>}
+                        {adj.reversal && <Badge tone="attention" size="small">Reversed</Badge>}
+                      </InlineStack>
                     </IndexTable.Cell>
 
                     <IndexTable.Cell>

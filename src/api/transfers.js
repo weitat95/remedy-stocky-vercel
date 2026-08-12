@@ -34,3 +34,13 @@ export async function confirmTransfer(id, payload = {}) {
   const res = await apiClient.post(`/transfers/${id}/confirm`, payload);
   return res.data.data;
 }
+
+/**
+ * Create and immediately execute a compensating transfer (from/to swapped) for a
+ * fully received transfer.
+ * @param {string} id - Transfer ID to reverse
+ */
+export async function reverseTransfer(id) {
+  const res = await apiClient.post(`/transfers/${id}/reverse`);
+  return res.data.data;
+}

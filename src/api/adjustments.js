@@ -30,6 +30,11 @@ export async function saveAdjustment(id, body) {
   return res.data.data;
 }
 
+export async function reverseAdjustment(id) {
+  const res = await apiClient.post(`/adjustments/${id}/reverse`);
+  return res.data.data;
+}
+
 export async function getInventoryLevel(inventoryItemId, locationId) {
   const res = await apiClient.get('/adjustments/inventory-level', {
     params: { inventoryItemId, locationId },

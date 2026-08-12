@@ -11,7 +11,6 @@ import {
   getPODetail,
   clonePurchaseOrder,
   archivePurchaseOrder,
-  undoReceivePO,
   updatePurchaseOrder,
   sendPOEmail,
 } from '../../api/purchaseOrders.js';
@@ -158,10 +157,6 @@ export default function PODetail() {
     mutationFn: () => archivePurchaseOrder(id),
     onSuccess: () => { invalidate(); navigate('/purchase-orders'); },
   });
-  const undoMutation = useMutation({
-    mutationFn: () => undoReceivePO(id),
-    onSuccess: invalidate,
-  });
   const saveNotesMutation = useMutation({
     mutationFn: (payload) => updatePurchaseOrder(id, payload),
     onSuccess: invalidate,
@@ -275,7 +270,6 @@ export default function PODetail() {
             ...(isReceivable && hasUnreceived ? [{ content: 'Edit', onAction: () => setEditMode(true) }] : []),
             { content: 'Clone', onAction: () => cloneMutation.mutate() },
             { content: 'Archive', disabled: po.archived, onAction: () => archiveMutation.mutate() },
-            { content: 'Undo Receive', disabled: !hasReceived, onAction: () => undoMutation.mutate() },
           ],
         },
       ]}
