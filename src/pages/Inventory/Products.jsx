@@ -7,8 +7,9 @@ import {
 } from '@shopify/polaris';
 import { SearchIcon, ExternalIcon, ChevronDownIcon, ChevronUpIcon } from '@shopify/polaris-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getProducts, importVariantMeta } from '../../api/products.js';
+import { getProducts, importVariantMeta, exportProducts } from '../../api/products.js';
 import { getLocations } from '../../api/inventory.js';
+import { downloadCSVFile } from '../../utils/csv.js';
 
 const VISIBLE_LOCATIONS_STORAGE_KEY = 'productsVisibleLocationIds';
 
@@ -238,6 +239,47 @@ export default function Products() {
     setImportOpen(true);
   }, []);
 
+  // ── CSV export ────────────────────────────────────────────────────────────
+  // Exports the full current search/tab result set (all matching pages, not just
+  // the page on screen), with one row per variant and a column per currently
+  // visible location — mirrors what's shown in the table. When a location-sort is
+  // active, `fetchedProducts` already holds the entire filtered catalog in sorted
+  // order (see the sort branch of GET /products) — reuse it directly instead of
+  // hitting /products/export, which knows nothing about sort order and would
+  // otherwise export in default Shopify order regardless of what's on screen.
+  const exportMutation = useMutation({
+    mutationFn: () => (isSorting
+      ? Promise.resolve({ products: fetchedProducts })
+      : exportProducts({
+          search: search || undefined,
+          searchBy: search ? searchBy : undefined,
+          tab,
+        })
+    ),
+    onSuccess: ({ products: exportedProducts }) => {
+      const headerRow = [
+        'Product Title', 'Variant Title', 'SKU', 'Vendor', 'Status', 'Supplier',
+        ...visibleLocations.map((loc) => loc.name),
+      ];
+      const rows = exportedProducts.flatMap((product) => {
+        const supplierNames = product.suppliers?.map((s) => s.name).join('; ') || '';
+        return product.variants.map((variant) => [
+          product.title,
+          product.variants.length > 1 ? variant.title : '',
+          variant.sku || '',
+          product.vendor || '',
+          product.status || '',
+          supplierNames,
+          ...visibleLocations.map((loc) => {
+            const qty = variant.inventoryByLocation?.[loc.id];
+            return qty === undefined ? '' : qty;
+          }),
+        ]);
+      });
+      downloadCSVFile(`products-${tab}-${new Date().toISOString().slice(0, 10)}.csv`, [headerRow, ...rows]);
+    },
+  });
+
   // ── Expandable rows ───────────────────────────────────────────────────────
   const [expandedIds, setExpandedIds] = useState(new Set());
   const toggleExpanded = useCallback((id) => {
@@ -279,12 +321,24 @@ export default function Products() {
       secondaryActions={[
         { content: 'Columns', onAction: () => setColumnsModalOpen(true), disabled: !locations.length },
         { content: 'Import CSV', onAction: handleOpenImport },
+        {
+          content: exportMutation.isPending ? 'Exporting…' : 'Export CSV',
+          onAction: () => exportMutation.mutate(),
+          disabled: exportMutation.isPending,
+        },
       ]}
     >
       <Layout>
         {error && (
           <Layout.Section>
             <Banner tone="critical">{error.message}</Banner>
+          </Layout.Section>
+        )}
+        {exportMutation.isError && (
+          <Layout.Section>
+            <Banner tone="critical" onDismiss={() => exportMutation.reset()}>
+              {exportMutation.error.message}
+            </Banner>
           </Layout.Section>
         )}
 

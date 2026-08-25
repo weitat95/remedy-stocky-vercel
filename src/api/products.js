@@ -9,3 +9,8 @@ export async function importVariantMeta(records) {
   const res = await apiClient.post('/products/meta/bulk', records);
   return res.data.data; // { imported }
 }
+
+export async function exportProducts(params = {}) {
+  const res = await apiClient.get('/products/export', { params });
+  return res.data.data; // { products }
+}
