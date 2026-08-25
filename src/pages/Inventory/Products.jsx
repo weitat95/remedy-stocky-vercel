@@ -50,6 +50,7 @@ export default function Products() {
   const handleSearch = useCallback(() => {
     setCursorStack([]);
     setCursor(null);
+    setClientPage(0);
     setSearch(searchDraft.trim());
   }, [searchDraft]);
 
@@ -58,6 +59,7 @@ export default function Products() {
     setSearch('');
     setCursorStack([]);
     setCursor(null);
+    setClientPage(0);
   }, []);
 
   // ── Pagination ────────────────────────────────────────────────────────────
@@ -65,18 +67,35 @@ export default function Products() {
   const [cursor, setCursor] = useState(null);
   const pageNum = cursorStack.length + 1;
 
+  // ── Location column sort ─────────────────────────────────────────────────
+  // Shopify has no per-location sort key, so sorting fetches the whole filtered
+  // catalog once (see GET /products?sortLocationId=...) and pagination becomes a
+  // client-side slice over that full list instead of Shopify cursor pagination.
+  const [sortLocationId, setSortLocationId] = useState(null);
+  const [sortDir, setSortDir] = useState('asc');
+  const [clientPage, setClientPage] = useState(0);
+  const isSorting = !!sortLocationId;
+
   const handleNext = useCallback((endCursor) => {
+    if (isSorting) {
+      setClientPage((p) => p + 1);
+      return;
+    }
     setCursorStack((prev) => [...prev, cursor]);
     setCursor(endCursor);
-  }, [cursor]);
+  }, [cursor, isSorting]);
 
   const handlePrev = useCallback(() => {
+    if (isSorting) {
+      setClientPage((p) => Math.max(0, p - 1));
+      return;
+    }
     setCursorStack((prev) => {
       const next = [...prev];
       setCursor(next.pop() ?? null);
       return next;
     });
-  }, []);
+  }, [isSorting]);
 
   // Reset pagination on tab change
   const handleTabChange = useCallback((idx) => {
@@ -85,23 +104,45 @@ export default function Products() {
     setCursor(null);
     setSearch('');
     setSearchDraft('');
+    setClientPage(0);
+  }, []);
+
+  const handleSort = useCallback((headingIndex, direction, sortHeadings) => {
+    const heading = sortHeadings[headingIndex];
+    if (!heading?.id?.startsWith('loc-')) return;
+    setSortLocationId(heading.id.slice('loc-'.length));
+    setSortDir(direction === 'ascending' ? 'asc' : 'desc');
+    setClientPage(0);
   }, []);
 
   // ── Query ─────────────────────────────────────────────────────────────────
-  const queryKey = ['products', tab, search, searchBy, cursor];
+  const queryKey = isSorting
+    ? ['products', tab, search, searchBy, 'sort', sortLocationId, sortDir]
+    : ['products', tab, search, searchBy, cursor];
   const { data, isLoading, error } = useQuery({
     queryKey,
     queryFn: () => getProducts({
-      first: 50,
-      after: cursor || undefined,
+      first: isSorting ? undefined : 50,
+      after: isSorting ? undefined : (cursor || undefined),
       search: search || undefined,
       searchBy: search ? searchBy : undefined,
       tab,
+      sortLocationId: sortLocationId || undefined,
+      sortDir: isSorting ? sortDir : undefined,
     }),
   });
 
-  const products = data?.products ?? [];
-  const pageInfo = data?.pageInfo ?? {};
+  const fetchedProducts = data?.products ?? [];
+  // In sort mode the backend returns the entire filtered+sorted catalog in one
+  // shot; slice it into pages here instead of asking Shopify for the next page.
+  const products = isSorting
+    ? fetchedProducts.slice(clientPage * 50, clientPage * 50 + 50)
+    : fetchedProducts;
+  const pageInfo = isSorting
+    ? { hasNextPage: (clientPage + 1) * 50 < fetchedProducts.length }
+    : (data?.pageInfo ?? {});
+  const displayPageNum = isSorting ? clientPage + 1 : pageNum;
+  const hasPreviousPage = isSorting ? clientPage > 0 : cursorStack.length > 0;
   const shopifyAdminBase = data?.shopifyAdminBase ?? '';
 
   // ── Location columns ─────────────────────────────────────────────────────
@@ -217,6 +258,12 @@ export default function Products() {
     ...visibleLocations.map((loc) => ({ id: `loc-${loc.id}`, title: loc.name, alignment: 'end' })),
     { id: 'shopify-link', title: '' },
   ];
+  const sortableColumns = headings.map((h) => h.id.startsWith('loc-'));
+  const foundSortIndex = sortLocationId ? headings.findIndex((h) => h.id === `loc-${sortLocationId}`) : -1;
+  const sortColumnIndex = foundSortIndex >= 0 ? foundSortIndex : undefined;
+  const activeSortDirection = sortColumnIndex !== undefined
+    ? (sortDir === 'desc' ? 'descending' : 'ascending')
+    : undefined;
 
   return (
     <Page
@@ -284,6 +331,11 @@ export default function Products() {
                 itemCount={products.length}
                 headings={headings}
                 selectable={false}
+                sortable={sortableColumns}
+                sortColumnIndex={sortColumnIndex}
+                sortDirection={activeSortDirection}
+                defaultSortDirection="descending"
+                onSort={(index, direction) => handleSort(index, direction, headings)}
               >
                 {products.map((product, index) => {
                   const isExpanded = expandedIds.has(product.id);
@@ -412,11 +464,11 @@ export default function Products() {
             <Box padding="300" borderBlockStartWidth="025" borderColor="border">
               <InlineStack align="center">
                 <Pagination
-                  hasPrevious={cursorStack.length > 0}
+                  hasPrevious={hasPreviousPage}
                   onPrevious={handlePrev}
                   hasNext={!!pageInfo.hasNextPage}
                   onNext={() => handleNext(pageInfo.endCursor)}
-                  label={`Page ${pageNum}`}
+                  label={`Page ${displayPageNum}`}
                 />
               </InlineStack>
             </Box>
