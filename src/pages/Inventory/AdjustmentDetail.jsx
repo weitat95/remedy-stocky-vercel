@@ -244,6 +244,10 @@ export default function AdjustmentDetail() {
     setLineItems((prev) => prev.filter((_, i) => i !== idx));
   }, []);
 
+  const clearAllLineItems = useCallback(() => {
+    setLineItems([]);
+  }, []);
+
   // ── Reason combobox ───────────────────────────────────────────────────────
   const reasonOpts = reasonPresets
     .map((p) => p.label)
@@ -482,6 +486,15 @@ export default function AdjustmentDetail() {
                         onClick={() => downloadCSVFile('adjustment-import-example.csv', ADJUSTMENT_CSV_EXAMPLE)}
                       >
                         Download example
+                      </Button>
+                      <Button
+                        size="slim"
+                        variant="plain"
+                        tone="critical"
+                        disabled={lineItems.length === 0}
+                        onClick={clearAllLineItems}
+                      >
+                        Remove all
                       </Button>
                     </InlineStack>
                   </>
