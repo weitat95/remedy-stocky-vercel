@@ -297,7 +297,15 @@ export default function Products() {
     { id: 'sku', title: 'SKU' },
     { id: 'vendor', title: 'Vendor' },
     { id: 'supplier', title: 'Supplier' },
-    ...visibleLocations.map((loc) => ({ id: `loc-${loc.id}`, title: loc.name, alignment: 'end' })),
+    ...visibleLocations.map((loc) => ({
+      id: `loc-${loc.id}`,
+      title: (
+        <span style={{ whiteSpace: 'normal', wordBreak: 'break-word', display: 'inline-block' }}>
+          {loc.name}
+        </span>
+      ),
+      alignment: 'end',
+    })),
     { id: 'shopify-link', title: '' },
   ];
   const sortableColumns = headings.map((h) => h.id.startsWith('loc-'));
