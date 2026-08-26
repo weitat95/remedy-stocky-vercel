@@ -11,6 +11,12 @@ import { getTaxRates } from '../../api/taxRates.js';
 import { createPurchaseOrder, updatePurchaseOrder } from '../../api/purchaseOrders.js';
 import { getProducts } from '../../api/products.js';
 import { parseCSV, downloadCSVFile } from '../../utils/csv.js';
+import SkuMatchModal from '../../components/SkuMatchModal.jsx';
+
+function matchLabel(product, variant) {
+  const name = product.variants.length === 1 ? product.title : `${product.title} — ${variant.title}`;
+  return `${name} (SKU: ${variant.sku})`;
+}
 
 const PO_CSV_EXAMPLE = [
   ['sku', 'quantity', 'cost_price', 'retail_price', 'supplier_code', 'tax_rate', 'note'],
@@ -85,6 +91,20 @@ export default function POForm({ onClose, existingPO }) {
   const csvFileRef = useRef(null);
   const [csvImporting, setCsvImporting] = useState(false);
   const [csvResult, setCsvResult] = useState(null); // { added, skipped, notFound[] }
+  const [csvSkipArchived, setCsvSkipArchived] = useState(true);
+
+  // Ambiguous SKU matches (duplicate SKU across active products)
+  const [ambiguous, setAmbiguous] = useState([]); // [{ sku, extras, matches: [{product, variant}] }]
+  const [ambiguousSelections, setAmbiguousSelections] = useState({});
+
+  const buildRowFromMatch = useCallback((product, variant, extras) => ({
+    shopifyVariantId: variant.id,
+    shopifyProductId: product.id,
+    productTitle: product.title,
+    variantTitle: variant.title,
+    sku: variant.sku ?? '',
+    ...extras,
+  }), []);
 
   const { data: suppliers = [] } = useQuery({ queryKey: ['suppliers'], queryFn: getSuppliers });
   const { data: locationsRaw } = useQuery({ queryKey: ['locations'], queryFn: getLocations });
@@ -170,25 +190,13 @@ export default function POForm({ onClose, existingPO }) {
         rows.map(async (row) => {
           const sku = row.sku?.trim();
           if (!sku) return null;
-          const data = await getProducts({ search: sku, searchBy: 'sku', first: 1 });
-          const product = data.products?.[0];
-          if (!product) return { sku, found: false };
-          const variant = product.variants?.find((v) => v.sku === sku) ?? product.variants?.[0];
-          if (!variant) return { sku, found: false };
 
           const costKey = ['cost_price', 'costprice', 'cost'].find((k) => k in row);
           const retailKey = ['retail_price', 'retailprice', 'retail'].find((k) => k in row);
           const supplierCodeKey = ['supplier_code', 'suppliercode'].find((k) => k in row);
           const noteKey = ['text_note', 'textnote', 'note'].find((k) => k in row);
           const taxKey = ['tax_rate', 'taxrate', 'tax'].find((k) => k in row);
-
-          return {
-            sku, found: true,
-            shopifyVariantId: variant.id,
-            shopifyProductId: product.id,
-            productTitle: product.title,
-            variantTitle: variant.title,
-            variantSku: variant.sku ?? '',
+          const extras = {
             quantity: row[qtyKey]?.trim() ?? '',
             costPrice: costKey ? (row[costKey]?.trim() ?? '') : '',
             retailPrice: retailKey ? (row[retailKey]?.trim() ?? '') : '',
@@ -196,32 +204,42 @@ export default function POForm({ onClose, existingPO }) {
             textNote: noteKey ? (row[noteKey]?.trim() ?? '') : '',
             taxRate: taxKey ? (row[taxKey]?.trim() ?? '0') : '0',
           };
+
+          // status: '-archived' excludes discontinued/archived lookalike SKUs
+          // (e.g. "ABC123-DISCON" for a search on "ABC123") at the Shopify query
+          // level, while still matching active/draft products. We still only
+          // accept an exact SKU match among the results — never fall back to an
+          // unrelated variant.
+          const data = await getProducts({
+            search: sku, searchBy: 'sku', first: 10,
+            ...(csvSkipArchived ? { status: '-archived' } : {}),
+          });
+          const matches = [];
+          for (const product of data.products ?? []) {
+            for (const variant of product.variants ?? []) {
+              if (variant.sku === sku) matches.push({ product, variant });
+            }
+          }
+          if (matches.length === 0) return { sku, kind: 'not-found' };
+          if (matches.length > 1) return { id: crypto.randomUUID(), sku, kind: 'ambiguous', extras, matches };
+          const { product, variant } = matches[0];
+          return { sku, kind: 'resolved', row: buildRowFromMatch(product, variant, extras) };
         })
       );
 
       let added = 0, skipped = 0;
       const notFound = [];
       const toAdd = [];
+      const pendingAmbiguous = [];
       const existing = new Set(lineItems.map((li) => li.shopifyVariantId).filter(Boolean));
 
       for (const r of lookups) {
         if (!r) continue;
-        if (!r.found) { notFound.push(r.sku); continue; }
-        if (existing.has(r.shopifyVariantId)) { skipped++; continue; }
-        existing.add(r.shopifyVariantId);
-        toAdd.push({
-          shopifyVariantId: r.shopifyVariantId,
-          shopifyProductId: r.shopifyProductId,
-          productTitle: r.productTitle,
-          variantTitle: r.variantTitle,
-          sku: r.variantSku,
-          quantity: r.quantity,
-          costPrice: r.costPrice,
-          retailPrice: r.retailPrice,
-          supplierCode: r.supplierCode,
-          textNote: r.textNote,
-          taxRate: r.taxRate,
-        });
+        if (r.kind === 'not-found') { notFound.push(r.sku); continue; }
+        if (r.kind === 'ambiguous') { pendingAmbiguous.push(r); continue; }
+        if (existing.has(r.row.shopifyVariantId)) { skipped++; continue; }
+        existing.add(r.row.shopifyVariantId);
+        toAdd.push(r.row);
         added++;
       }
 
@@ -232,12 +250,54 @@ export default function POForm({ onClose, existingPO }) {
         });
       }
       setCsvResult({ added, skipped, notFound });
+      if (pendingAmbiguous.length > 0) {
+        setAmbiguous(pendingAmbiguous);
+        setAmbiguousSelections({});
+      }
     } catch (err) {
       setFormError('CSV import failed: ' + err.message);
     } finally {
       setCsvImporting(false);
     }
-  }, [lineItems]);
+  }, [lineItems, buildRowFromMatch, csvSkipArchived]);
+
+  const handleAmbiguousSelect = useCallback((id, variantId) => {
+    setAmbiguousSelections((prev) => ({ ...prev, [id]: variantId }));
+  }, []);
+
+  const handleAmbiguousConfirm = useCallback(() => {
+    const existing = new Set(lineItems.map((li) => li.shopifyVariantId).filter(Boolean));
+    const toAdd = [];
+    let added = 0, skipped = 0;
+    for (const a of ambiguous) {
+      const variantId = ambiguousSelections[a.id];
+      const match = variantId && a.matches.find((m) => m.variant.id === variantId);
+      if (!match) { skipped++; continue; }
+      if (existing.has(match.variant.id)) { skipped++; continue; }
+      existing.add(match.variant.id);
+      toAdd.push(buildRowFromMatch(match.product, match.variant, a.extras));
+      added++;
+    }
+    if (toAdd.length > 0) {
+      setLineItems((prev) => {
+        const cleaned = prev.filter((li) => li.shopifyVariantId || li.quantity);
+        return [...cleaned, ...toAdd];
+      });
+    }
+    setCsvResult((prev) => prev
+      ? { ...prev, added: prev.added + added, skipped: prev.skipped + skipped }
+      : { added, skipped, notFound: [] });
+    setAmbiguous([]);
+    setAmbiguousSelections({});
+  }, [ambiguous, ambiguousSelections, lineItems, buildRowFromMatch]);
+
+  const handleAmbiguousCancel = useCallback(() => {
+    setCsvResult((prev) => prev
+      ? { ...prev, skipped: prev.skipped + ambiguous.length }
+      : { added: 0, skipped: ambiguous.length, notFound: [] });
+    setAmbiguous([]);
+    setAmbiguousSelections({});
+  }, [ambiguous]);
 
   const handleSubmit = useCallback(() => {
     setFormError(null);
@@ -283,6 +343,7 @@ export default function POForm({ onClose, existingPO }) {
       paid, lineItems, isEditing, saveMutation]);
 
   return (
+    <>
     <Page
       title={isEditing ? `Edit PO #${existingPO.poNumber || ''} — ${existingPO.supplier?.name}` : 'Create Purchase Order'}
       backAction={{ content: 'Back', onAction: onClose }}
@@ -388,6 +449,7 @@ export default function POForm({ onClose, existingPO }) {
                     </div>
                     <Button size="slim" onClick={handleApplyTaxToAll}>Apply</Button>
                     <Button size="slim" loading={csvImporting} onClick={() => csvFileRef.current?.click()}>Import CSV</Button>
+                    <Checkbox label="Skip archived products" checked={csvSkipArchived} onChange={setCsvSkipArchived} />
                     <Button size="slim" variant="plain" onClick={() => downloadCSVFile('po-import-example.csv', PO_CSV_EXAMPLE)}>Download example</Button>
                     <Button onClick={handleAddLineItem} size="slim">Add Item</Button>
                   </InlineStack>
@@ -410,7 +472,7 @@ export default function POForm({ onClose, existingPO }) {
                   onDismiss={() => setCsvResult(null)}
                 >
                   {csvResult.added} item{csvResult.added !== 1 ? 's' : ''} imported
-                  {csvResult.skipped > 0 && `, ${csvResult.skipped} duplicate${csvResult.skipped !== 1 ? 's' : ''} skipped`}
+                  {csvResult.skipped > 0 && `, ${csvResult.skipped} skipped`}
                   {csvResult.notFound.length > 0 && `. SKUs not found: ${csvResult.notFound.join(', ')}`}
                 </Banner>
               )}
@@ -512,5 +574,18 @@ export default function POForm({ onClose, existingPO }) {
         </Layout.Section>
       </Layout>
     </Page>
+    <SkuMatchModal
+      open={ambiguous.length > 0}
+      items={ambiguous.map((a) => ({
+        id: a.id,
+        sku: a.sku,
+        options: a.matches.map((m) => ({ label: matchLabel(m.product, m.variant), value: m.variant.id })),
+      }))}
+      selections={ambiguousSelections}
+      onSelect={handleAmbiguousSelect}
+      onConfirm={handleAmbiguousConfirm}
+      onCancel={handleAmbiguousCancel}
+    />
+    </>
   );
 }

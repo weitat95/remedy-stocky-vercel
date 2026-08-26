@@ -21,6 +21,7 @@ import {
   Spinner,
   Banner,
   Box,
+  Checkbox,
 } from '@shopify/polaris';
 import { ImportIcon, SearchIcon, DeleteIcon } from '@shopify/polaris-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -34,6 +35,12 @@ import {
 import { getLocations } from '../../api/inventory.js';
 import { getProducts } from '../../api/products.js';
 import { parseCSV, downloadCSVFile } from '../../utils/csv.js';
+import SkuMatchModal from '../../components/SkuMatchModal.jsx';
+
+function matchLabel(product, variant) {
+  const name = product.variants.length === 1 ? product.title : `${product.title} — ${variant.title}`;
+  return `${name} (SKU: ${variant.sku})`;
+}
 
 const TRANSFER_CSV_EXAMPLE = [
   ['sku', 'quantity'],
@@ -69,6 +76,19 @@ export default function Transfers() {
   const csvFileRef = useRef(null);
   const [csvImporting, setCsvImporting] = useState(false);
   const [csvResult, setCsvResult] = useState(null); // { added, skipped, notFound }
+  const [csvSkipArchived, setCsvSkipArchived] = useState(true);
+
+  // Ambiguous SKU matches (duplicate SKU across active products)
+  const [ambiguous, setAmbiguous] = useState([]); // [{ sku, quantity, matches: [{product, variant}] }]
+  const [ambiguousSelections, setAmbiguousSelections] = useState({}); // { [sku]: variantId }
+
+  const buildRowFromMatch = useCallback((product, variant, quantity) => ({
+    shopifyVariantId: variant.id,
+    productTitle: product.title,
+    variantTitle: product.variants.length === 1 ? '' : variant.title,
+    sku: variant.sku ?? '',
+    quantity,
+  }), []);
 
   const handleCsvFileSelect = useCallback(async (e) => {
     const file = e.target.files?.[0];
@@ -90,30 +110,40 @@ export default function Transfers() {
         rows.map(async (row) => {
           const sku = row.sku?.trim();
           if (!sku) return null;
-          const data = await getProducts({ search: sku, searchBy: 'sku', first: 1 });
-          const product = data.products[0];
-          if (!product) return { sku, found: false };
-          const variant = product.variants.find((v) => v.sku === sku) ?? product.variants[0];
-          return {
-            sku, found: true,
-            shopifyVariantId: variant.id,
-            productTitle: product.title,
-            variantTitle: product.variants.length === 1 ? '' : variant.title,
-            variantSku: variant.sku ?? '',
-            quantity: row[qtyKey]?.trim() ?? '',
-          };
+          const quantity = row[qtyKey]?.trim() ?? '';
+          // status: '-archived' excludes discontinued/archived lookalike SKUs
+          // (e.g. "ABC123-DISCON" for a search on "ABC123") at the Shopify query
+          // level, while still matching active/draft products. We still only
+          // accept an exact SKU match among the results — never fall back to an
+          // unrelated variant.
+          const data = await getProducts({
+            search: sku, searchBy: 'sku', first: 10,
+            ...(csvSkipArchived ? { status: '-archived' } : {}),
+          });
+          const matches = [];
+          for (const product of data.products) {
+            for (const variant of product.variants) {
+              if (variant.sku === sku) matches.push({ product, variant });
+            }
+          }
+          if (matches.length === 0) return { sku, kind: 'not-found' };
+          if (matches.length > 1) return { id: crypto.randomUUID(), sku, kind: 'ambiguous', quantity, matches };
+          const { product, variant } = matches[0];
+          return { sku, kind: 'resolved', row: buildRowFromMatch(product, variant, quantity) };
         })
       );
       let added = 0, skipped = 0;
       const notFound = [];
       const toAdd = [];
+      const pendingAmbiguous = [];
       const existing = new Set(lineItems.map((li) => li.shopifyVariantId).filter(Boolean));
       for (const r of lookups) {
         if (!r) continue;
-        if (!r.found) { notFound.push(r.sku); continue; }
-        if (existing.has(r.shopifyVariantId)) { skipped++; continue; }
-        existing.add(r.shopifyVariantId);
-        toAdd.push({ shopifyVariantId: r.shopifyVariantId, productTitle: r.productTitle, variantTitle: r.variantTitle, sku: r.variantSku, quantity: r.quantity });
+        if (r.kind === 'not-found') { notFound.push(r.sku); continue; }
+        if (r.kind === 'ambiguous') { pendingAmbiguous.push(r); continue; }
+        if (existing.has(r.row.shopifyVariantId)) { skipped++; continue; }
+        existing.add(r.row.shopifyVariantId);
+        toAdd.push(r.row);
         added++;
       }
       if (toAdd.length > 0) {
@@ -124,12 +154,54 @@ export default function Transfers() {
         });
       }
       setCsvResult({ added, skipped, notFound });
+      if (pendingAmbiguous.length > 0) {
+        setAmbiguous(pendingAmbiguous);
+        setAmbiguousSelections({});
+      }
     } catch (err) {
       setFormError('CSV import failed: ' + err.message);
     } finally {
       setCsvImporting(false);
     }
-  }, [lineItems]);
+  }, [lineItems, buildRowFromMatch, csvSkipArchived]);
+
+  const handleAmbiguousSelect = useCallback((id, variantId) => {
+    setAmbiguousSelections((prev) => ({ ...prev, [id]: variantId }));
+  }, []);
+
+  const handleAmbiguousConfirm = useCallback(() => {
+    const existing = new Set(lineItems.map((li) => li.shopifyVariantId).filter(Boolean));
+    const toAdd = [];
+    let added = 0, skipped = 0;
+    for (const a of ambiguous) {
+      const variantId = ambiguousSelections[a.id];
+      const match = variantId && a.matches.find((m) => m.variant.id === variantId);
+      if (!match) { skipped++; continue; }
+      if (existing.has(match.variant.id)) { skipped++; continue; }
+      existing.add(match.variant.id);
+      toAdd.push(buildRowFromMatch(match.product, match.variant, a.quantity));
+      added++;
+    }
+    if (toAdd.length > 0) {
+      setLineItems((prev) => {
+        const cleaned = prev.filter((li) => li.shopifyVariantId || li.quantity);
+        return [...cleaned, ...toAdd];
+      });
+    }
+    setCsvResult((prev) => prev
+      ? { ...prev, added: prev.added + added, skipped: prev.skipped + skipped }
+      : { added, skipped, notFound: [] });
+    setAmbiguous([]);
+    setAmbiguousSelections({});
+  }, [ambiguous, ambiguousSelections, lineItems, buildRowFromMatch]);
+
+  const handleAmbiguousCancel = useCallback(() => {
+    setCsvResult((prev) => prev
+      ? { ...prev, skipped: prev.skipped + ambiguous.length }
+      : { added: 0, skipped: ambiguous.length, notFound: [] });
+    setAmbiguous([]);
+    setAmbiguousSelections({});
+  }, [ambiguous]);
 
   // Variant search for manual line item entry
   const [variantSearch, setVariantSearch] = useState('');
@@ -415,7 +487,7 @@ export default function Transfers() {
               onDismiss={() => setCsvResult(null)}
             >
               {csvResult.added} variant{csvResult.added !== 1 ? 's' : ''} imported
-              {csvResult.skipped > 0 ? `, ${csvResult.skipped} skipped (duplicate)` : ''}
+              {csvResult.skipped > 0 ? `, ${csvResult.skipped} skipped` : ''}
               {csvResult.notFound.length > 0
                 ? `, ${csvResult.notFound.length} SKU${csvResult.notFound.length !== 1 ? 's' : ''} not found: ${csvResult.notFound.join(', ')}`
                 : ''}
@@ -452,6 +524,11 @@ export default function Transfers() {
               >
                 Import line items from CSV
               </Button>
+              <Checkbox
+                label="Skip archived products"
+                checked={csvSkipArchived}
+                onChange={setCsvSkipArchived}
+              />
               <Button
                 size="slim"
                 variant="plain"
@@ -564,6 +641,19 @@ export default function Transfers() {
           </Modal.Section>
         )}
       </Modal>
+
+      <SkuMatchModal
+        open={ambiguous.length > 0}
+        items={ambiguous.map((a) => ({
+          id: a.id,
+          sku: a.sku,
+          options: a.matches.map((m) => ({ label: matchLabel(m.product, m.variant), value: m.variant.id })),
+        }))}
+        selections={ambiguousSelections}
+        onSelect={handleAmbiguousSelect}
+        onConfirm={handleAmbiguousConfirm}
+        onCancel={handleAmbiguousCancel}
+      />
     </Page>
   );
 }
