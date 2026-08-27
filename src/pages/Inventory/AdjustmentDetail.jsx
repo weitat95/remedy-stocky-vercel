@@ -17,10 +17,12 @@ import { getProducts } from '../../api/products.js';
 import { getAdjustmentReasons } from '../../api/adjustmentReasons.js';
 import { parseCSV, downloadCSVFile } from '../../utils/csv.js';
 import SkuMatchModal from '../../components/SkuMatchModal.jsx';
+import ArchivedSkuModal from '../../components/ArchivedSkuModal.jsx';
 
 function matchLabel(product, variant) {
   const name = product.variants.length === 1 ? product.title : `${product.title} — ${variant.title}`;
-  return `${name} (SKU: ${variant.sku})`;
+  const archivedTag = product.status === 'ARCHIVED' ? ' [Archived]' : '';
+  return `${name} (SKU: ${variant.sku})${archivedTag}`;
 }
 
 const ADJUSTMENT_CSV_EXAMPLE = [
@@ -111,7 +113,7 @@ export default function AdjustmentDetail() {
   const csvFileRef = useRef(null);
   const [csvImporting, setCsvImporting] = useState(false);
   const [csvResult, setCsvResult] = useState(null); // { added, skipped, notFound }
-  const [csvSkipArchived, setCsvSkipArchived] = useState(true);
+  const [archivedModalSkus, setArchivedModalSkus] = useState([]);
 
   // ── Ambiguous SKU matches (duplicate SKU across active products) ───────────
   const [ambiguous, setAmbiguous] = useState([]); // [{ sku, delta, matches: [{product, variant}] }]
@@ -149,15 +151,10 @@ export default function AdjustmentDetail() {
           const sku = row.sku?.trim();
           if (!sku) return null;
           const delta = row[deltaKey]?.trim();
-          // status: '-archived' excludes discontinued/archived lookalike SKUs
-          // (e.g. "ABC123-DISCON" for a search on "ABC123") at the Shopify query
-          // level, while still matching active/draft products. We still only
-          // accept an exact SKU match among the results — never fall back to an
-          // unrelated variant.
-          const data = await getProducts({
-            search: sku, searchBy: 'sku', first: 10,
-            ...(csvSkipArchived ? { status: '-archived' } : {}),
-          });
+          // Exact SKU match only — Shopify's sku: search tokenizes on hyphens, so
+          // a search for "ABC123" also returns lookalikes like "ABC123-DISCON";
+          // we never fall back to those, only a byte-for-byte match on the SKU.
+          const data = await getProducts({ search: sku, searchBy: 'sku', first: 10 });
           const matches = [];
           for (const product of data.products) {
             for (const variant of product.variants) {
@@ -167,17 +164,23 @@ export default function AdjustmentDetail() {
           if (matches.length === 0) return { sku, kind: 'not-found' };
           if (matches.length > 1) return { id: crypto.randomUUID(), sku, kind: 'ambiguous', delta, matches };
           const { product, variant } = matches[0];
+          // Archived products are discontinued — importing an adjustment against
+          // one is very likely a mistake (recycled/lookalike SKU), so flag it as
+          // an error instead of silently applying it.
+          if (product.status === 'ARCHIVED') return { sku, kind: 'archived' };
           return { sku, kind: 'resolved', item: buildItemFromMatch(product, variant, delta) };
         })
       );
       let added = 0, skipped = 0;
       const notFound = [];
+      const archivedSkus = [];
       const newItems = [];
       const pendingAmbiguous = [];
       const existingSkus = new Set(lineItems.map((li) => li.sku));
       for (const r of lookups) {
         if (!r) continue;
         if (r.kind === 'not-found') { notFound.push(r.sku); continue; }
+        if (r.kind === 'archived') { archivedSkus.push(r.sku); skipped++; continue; }
         if (r.kind === 'ambiguous') { pendingAmbiguous.push(r); continue; }
         if (existingSkus.has(r.item.sku)) { skipped++; continue; }
         existingSkus.add(r.item.sku);
@@ -186,6 +189,7 @@ export default function AdjustmentDetail() {
       }
       if (newItems.length > 0) setLineItems((prev) => [...prev, ...newItems]);
       setCsvResult({ added, skipped, notFound });
+      if (archivedSkus.length > 0) setArchivedModalSkus(archivedSkus);
       if (pendingAmbiguous.length > 0) {
         setAmbiguous(pendingAmbiguous);
         setAmbiguousSelections({});
@@ -195,7 +199,7 @@ export default function AdjustmentDetail() {
     } finally {
       setCsvImporting(false);
     }
-  }, [lineItems, buildItemFromMatch, csvSkipArchived]);
+  }, [lineItems, buildItemFromMatch]);
 
   const handleAmbiguousSelect = useCallback((id, variantId) => {
     setAmbiguousSelections((prev) => ({ ...prev, [id]: variantId }));
@@ -205,10 +209,12 @@ export default function AdjustmentDetail() {
     const newItems = [];
     const existingSkus = new Set(lineItems.map((li) => li.sku));
     let added = 0, skipped = 0;
+    const archivedSkus = [];
     for (const a of ambiguous) {
       const variantId = ambiguousSelections[a.id];
       const match = variantId && a.matches.find((m) => m.variant.id === variantId);
       if (!match) { skipped++; continue; }
+      if (match.product.status === 'ARCHIVED') { archivedSkus.push(a.sku); skipped++; continue; }
       if (existingSkus.has(match.variant.sku ?? '')) { skipped++; continue; }
       existingSkus.add(match.variant.sku ?? '');
       newItems.push(buildItemFromMatch(match.product, match.variant, a.delta));
@@ -218,6 +224,7 @@ export default function AdjustmentDetail() {
     setCsvResult((prev) => prev
       ? { ...prev, added: prev.added + added, skipped: prev.skipped + skipped }
       : { added, skipped, notFound: [] });
+    if (archivedSkus.length > 0) setArchivedModalSkus((prev) => [...prev, ...archivedSkus]);
     setAmbiguous([]);
     setAmbiguousSelections({});
   }, [ambiguous, ambiguousSelections, lineItems, buildItemFromMatch]);
@@ -543,11 +550,6 @@ export default function AdjustmentDetail() {
                       >
                         Import CSV
                       </Button>
-                      <Checkbox
-                        label="Skip archived products"
-                        checked={csvSkipArchived}
-                        onChange={setCsvSkipArchived}
-                      />
                       <Button
                         size="slim"
                         variant="plain"
@@ -845,6 +847,12 @@ export default function AdjustmentDetail() {
         onSelect={handleAmbiguousSelect}
         onConfirm={handleAmbiguousConfirm}
         onCancel={handleAmbiguousCancel}
+      />
+
+      <ArchivedSkuModal
+        open={archivedModalSkus.length > 0}
+        skus={archivedModalSkus}
+        onClose={() => setArchivedModalSkus([])}
       />
     </Page>
   );
