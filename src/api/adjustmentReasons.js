@@ -5,17 +5,22 @@ export async function getAdjustmentReasons() {
   return res.data.data;
 }
 
-export async function createAdjustmentReason(label) {
-  const res = await apiClient.post('/adjustment-reasons', { label });
+export async function createAdjustmentReason(code, label) {
+  const res = await apiClient.post('/adjustment-reasons', { code, label });
   return res.data.data;
 }
 
-export async function updateAdjustmentReason(id, label) {
-  const res = await apiClient.put(`/adjustment-reasons/${id}`, { label });
+export async function updateAdjustmentReason(id, code, label) {
+  const res = await apiClient.put(`/adjustment-reasons/${id}`, { code, label });
   return res.data.data;
 }
 
 export async function deleteAdjustmentReason(id) {
   const res = await apiClient.delete(`/adjustment-reasons/${id}`);
+  return res.data.data;
+}
+
+export async function reorderAdjustmentReasons(ids) {
+  const res = await apiClient.put('/adjustment-reasons/reorder', { ids });
   return res.data.data;
 }

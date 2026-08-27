@@ -4,27 +4,19 @@ import {
   InlineStack, BlockStack, Banner, Spinner, Pagination, Box, Tabs,
   Modal, TextField, ResourceList, ResourceItem,
 } from '@shopify/polaris';
+import { ChevronUpIcon, ChevronDownIcon } from '@shopify/polaris-icons';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getAdjustments, deleteAdjustment } from '../../api/adjustments.js';
 import {
   getAdjustmentReasons, createAdjustmentReason,
-  updateAdjustmentReason, deleteAdjustmentReason,
+  updateAdjustmentReason, deleteAdjustmentReason, reorderAdjustmentReasons,
 } from '../../api/adjustmentReasons.js';
 
 const TABS = [
   { id: 'open', content: 'Open' },
   { id: 'archived', content: 'Archived' },
 ];
-
-const REASON_LABELS = {
-  correction: 'Stock Correction',
-  shrinkage: 'Stock Write-Off',
-  damaged: 'Damaged / Tester Use',
-  received: 'Supplier Return',
-  cycle_count_available: 'Cycle Count',
-  other: 'Other',
-};
 
 function fmtDate(d) {
   if (!d) return '—';
@@ -81,31 +73,41 @@ export default function Adjustments() {
 
   // ── Manage reasons modal ──────────────────────────────────────────────────
   const [reasonsOpen, setReasonsOpen] = useState(false);
-  const [newReason, setNewReason] = useState('');
+  const [newCode, setNewCode] = useState('');
+  const [newLabel, setNewLabel] = useState('');
+  const [reasonError, setReasonError] = useState(null);
   const [editingId, setEditingId] = useState(null);
+  const [editingCode, setEditingCode] = useState('');
   const [editingLabel, setEditingLabel] = useState('');
 
   const { data: reasonPresets = [] } = useQuery({
     queryKey: ['adjustment-reasons'],
     queryFn: getAdjustmentReasons,
-    enabled: reasonsOpen,
   });
 
+  const reasonLabelByCode = Object.fromEntries(reasonPresets.map((p) => [p.code, p.label]));
+
   const createReasonMutation = useMutation({
-    mutationFn: () => createAdjustmentReason(newReason.trim()),
+    mutationFn: () => createAdjustmentReason(newCode.trim(), newLabel.trim()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['adjustment-reasons'] });
-      setNewReason('');
+      setNewCode('');
+      setNewLabel('');
+      setReasonError(null);
     },
+    onError: (err) => setReasonError(err.response?.data?.error ?? 'Failed to add reason'),
   });
 
   const updateReasonMutation = useMutation({
-    mutationFn: ({ id, label }) => updateAdjustmentReason(id, label),
+    mutationFn: ({ id, code, label }) => updateAdjustmentReason(id, code, label),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['adjustment-reasons'] });
       setEditingId(null);
+      setEditingCode('');
       setEditingLabel('');
+      setReasonError(null);
     },
+    onError: (err) => setReasonError(err.response?.data?.error ?? 'Failed to update reason'),
   });
 
   const deleteReasonMutation = useMutation({
@@ -113,14 +115,31 @@ export default function Adjustments() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['adjustment-reasons'] }),
   });
 
+  const reorderMutation = useMutation({
+    mutationFn: reorderAdjustmentReasons,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['adjustment-reasons'] }),
+  });
+
+  const moveReason = useCallback((index, direction) => {
+    const swapIndex = index + direction;
+    if (swapIndex < 0 || swapIndex >= reasonPresets.length) return;
+    const reordered = [...reasonPresets];
+    [reordered[index], reordered[swapIndex]] = [reordered[swapIndex], reordered[index]];
+    reorderMutation.mutate(reordered.map((p) => p.id));
+  }, [reasonPresets, reorderMutation]);
+
   const startEdit = useCallback((preset) => {
     setEditingId(preset.id);
+    setEditingCode(preset.code);
     setEditingLabel(preset.label);
+    setReasonError(null);
   }, []);
 
   const cancelEdit = useCallback(() => {
     setEditingId(null);
+    setEditingCode('');
     setEditingLabel('');
+    setReasonError(null);
   }, []);
 
   // ── Table ─────────────────────────────────────────────────────────────────
@@ -180,7 +199,7 @@ export default function Adjustments() {
 
                     <IndexTable.Cell>
                       <InlineStack gap="150" blockAlign="center">
-                        <Text>{REASON_LABELS[adj.reason] ?? adj.reason}</Text>
+                        <Text>{reasonLabelByCode[adj.reason] ?? adj.reason}</Text>
                         {adj.reversalOf && <Badge tone="info" size="small">Reversal of #{adj.reversalOf.adjNumber}</Badge>}
                         {adj.reversal && <Badge tone="attention" size="small">Reversed</Badge>}
                       </InlineStack>
@@ -245,22 +264,35 @@ export default function Adjustments() {
         secondaryActions={[{ content: 'Close', onAction: () => setReasonsOpen(false) }]}
       >
         <Modal.Section>
+          {reasonError && (
+            <Box paddingBlockEnd="300">
+              <Banner tone="critical" onDismiss={() => setReasonError(null)}>{reasonError}</Banner>
+            </Box>
+          )}
           <InlineStack gap="200" blockAlign="end">
+            <TextField
+              label="Code"
+              value={newCode}
+              onChange={setNewCode}
+              autoComplete="off"
+              placeholder="e.g. SAMPLE"
+              onKeyDown={(e) => e.key === 'Enter' && newCode.trim() && newLabel.trim() && createReasonMutation.mutate()}
+            />
             <div style={{ flex: 1 }}>
               <TextField
-                label="New reason"
-                value={newReason}
-                onChange={setNewReason}
+                label="Label"
+                value={newLabel}
+                onChange={setNewLabel}
                 autoComplete="off"
                 placeholder="e.g. Sample / Tester"
-                onKeyDown={(e) => e.key === 'Enter' && newReason.trim() && createReasonMutation.mutate()}
+                onKeyDown={(e) => e.key === 'Enter' && newCode.trim() && newLabel.trim() && createReasonMutation.mutate()}
               />
             </div>
             <Button
               variant="primary"
               onClick={() => createReasonMutation.mutate()}
               loading={createReasonMutation.isPending}
-              disabled={!newReason.trim()}
+              disabled={!newCode.trim() || !newLabel.trim()}
             >
               Add
             </Button>
@@ -271,7 +303,7 @@ export default function Adjustments() {
           <ResourceList
             resourceName={{ singular: 'reason', plural: 'reasons' }}
             items={reasonPresets}
-            renderItem={(preset) => (
+            renderItem={(preset, _id, index) => (
               <ResourceItem
                 id={preset.id}
                 shortcutActions={
@@ -289,13 +321,22 @@ export default function Adjustments() {
               >
                 {editingId === preset.id ? (
                   <InlineStack gap="200" blockAlign="center">
+                    <TextField
+                      value={editingCode}
+                      onChange={setEditingCode}
+                      autoComplete="off"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') updateReasonMutation.mutate({ id: preset.id, code: editingCode, label: editingLabel });
+                        if (e.key === 'Escape') cancelEdit();
+                      }}
+                    />
                     <div style={{ flex: 1 }}>
                       <TextField
                         value={editingLabel}
                         onChange={setEditingLabel}
                         autoComplete="off"
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') updateReasonMutation.mutate({ id: preset.id, label: editingLabel });
+                          if (e.key === 'Enter') updateReasonMutation.mutate({ id: preset.id, code: editingCode, label: editingLabel });
                           if (e.key === 'Escape') cancelEdit();
                         }}
                       />
@@ -303,16 +344,37 @@ export default function Adjustments() {
                     <Button
                       size="slim"
                       variant="primary"
-                      onClick={() => updateReasonMutation.mutate({ id: preset.id, label: editingLabel })}
+                      onClick={() => updateReasonMutation.mutate({ id: preset.id, code: editingCode, label: editingLabel })}
                       loading={updateReasonMutation.isPending}
-                      disabled={!editingLabel.trim()}
+                      disabled={!editingCode.trim() || !editingLabel.trim()}
                     >
                       Save
                     </Button>
                     <Button size="slim" onClick={cancelEdit}>Cancel</Button>
                   </InlineStack>
                 ) : (
-                  <Text variant="bodyMd">{preset.label}</Text>
+                  <InlineStack gap="200" blockAlign="center">
+                    <InlineStack gap="0" blockAlign="center">
+                      <Button
+                        icon={ChevronUpIcon}
+                        variant="tertiary"
+                        size="micro"
+                        accessibilityLabel="Move up"
+                        disabled={index === 0 || reorderMutation.isPending}
+                        onClick={() => moveReason(index, -1)}
+                      />
+                      <Button
+                        icon={ChevronDownIcon}
+                        variant="tertiary"
+                        size="micro"
+                        accessibilityLabel="Move down"
+                        disabled={index === reasonPresets.length - 1 || reorderMutation.isPending}
+                        onClick={() => moveReason(index, 1)}
+                      />
+                    </InlineStack>
+                    <Badge>{preset.code}</Badge>
+                    <Text variant="bodyMd">{preset.label}</Text>
+                  </InlineStack>
                 )}
               </ResourceItem>
             )}

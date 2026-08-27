@@ -25,6 +25,10 @@ function matchLabel(product, variant) {
   return `${name} (SKU: ${variant.sku})${archivedTag}`;
 }
 
+function formatReason(preset) {
+  return `${preset.code} - ${preset.label}`;
+}
+
 const ADJUSTMENT_CSV_EXAMPLE = [
   ['sku', 'adjustment'],
   ['SKU-001', '5'],
@@ -98,7 +102,8 @@ export default function AdjustmentDetail() {
   // ── Footer form state ─────────────────────────────────────────────────────
   const [locationId, setLocationId] = useState('');
   const [notes, setNotes] = useState('');
-  const [reason, setReason] = useState('');
+  const [reason, setReason] = useState('');            // preset code, or free text if no preset matches
+  const [reasonInput, setReasonInput] = useState('');   // text shown/typed in the reason field
   const [employee, setEmployee] = useState('');
 
   // ── Line items ────────────────────────────────────────────────────────────
@@ -261,6 +266,14 @@ export default function AdjustmentDetail() {
     }
   }, [existing]);
 
+  // Once presets load, show the reason's label instead of its raw code.
+  useEffect(() => {
+    if (existing) {
+      const code = existing.reason ?? '';
+      const preset = reasonPresets.find((p) => p.code === code);
+      setReasonInput(preset ? formatReason(preset) : code);
+    }
+  }, [existing, reasonPresets]);
 
   // ── Variant search ────────────────────────────────────────────────────────
   const [variantSearch, setVariantSearch] = useState('');
@@ -319,10 +332,26 @@ export default function AdjustmentDetail() {
   }, []);
 
   // ── Reason combobox ───────────────────────────────────────────────────────
+  // Selecting an option stores its `code` (value) in `reason`; "CODE - Label" is shown/typed
+  // in `reasonInput`. Free-typed text that matches no preset is stored verbatim as-is.
+  // reasonPresets is already sorted by sortOrder — filter/map below preserve that order.
   const reasonOpts = reasonPresets
-    .map((p) => p.label)
-    .filter((r) => !reason || r.toLowerCase().includes(reason.toLowerCase()))
-    .map((r) => ({ value: r, label: r }));
+    .filter((p) => !reasonInput
+      || p.code.toLowerCase().includes(reasonInput.toLowerCase())
+      || p.label.toLowerCase().includes(reasonInput.toLowerCase()))
+    .map((p) => ({ value: p.code, label: formatReason(p) }));
+
+  const handleReasonInputChange = useCallback((value) => {
+    setReasonInput(value);
+    setReason(value);
+  }, []);
+
+  const handleReasonSelect = useCallback((selected) => {
+    const code = selected[0] ?? '';
+    const preset = reasonPresets.find((p) => p.code === code);
+    setReason(code);
+    setReasonInput(preset ? formatReason(preset) : code);
+  }, [reasonPresets]);
 
   // ── Mutations ─────────────────────────────────────────────────────────────
   const buildBody = () => ({
@@ -739,13 +768,13 @@ export default function AdjustmentDetail() {
                 />
                 <Autocomplete
                   options={reasonOpts}
-                  selected={reason ? [reason] : []}
-                  onSelect={(sel) => setReason(sel[0] ?? '')}
+                  selected={reasonOpts.some((o) => o.value === reason) ? [reason] : []}
+                  onSelect={handleReasonSelect}
                   textField={
                     <Autocomplete.TextField
                       label="Reason"
-                      value={reason}
-                      onChange={setReason}
+                      value={reasonInput}
+                      onChange={handleReasonInputChange}
                       placeholder="Select or type a reason…"
                       autoComplete="off"
                       disabled={isArchived}
