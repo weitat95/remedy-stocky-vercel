@@ -7,6 +7,7 @@ import {
   PersonIcon,
   LocationIcon,
   OrderIcon,
+  OrderDraftIcon,
   ProductIcon,
   AdjustIcon,
   TransferIcon,
@@ -31,6 +32,7 @@ import Products from './pages/Inventory/Products.jsx';
 import Adjustments from './pages/Inventory/Adjustments.jsx';
 import AdjustmentDetail from './pages/Inventory/AdjustmentDetail.jsx';
 import Transfers from './pages/Transfers/index.jsx';
+import DraftOrders from './pages/DraftOrders/index.jsx';
 import Reports from './pages/Reports/index.jsx';
 
 export default function App() {
@@ -115,6 +117,13 @@ export default function App() {
             url: '/orders',
             onClick: () => navigate('/orders'),
             selected: is('/orders'),
+          },
+          {
+            label: 'Draft Orders',
+            icon: OrderDraftIcon,
+            url: '/draft-orders',
+            onClick: () => navigate('/draft-orders'),
+            selected: is('/draft-orders'),
           },
         ]}
       />
@@ -239,6 +248,7 @@ export default function App() {
         <Route path="/purchase-orders" element={<PurchaseOrders />} />
         <Route path="/purchase-orders/:id" element={<PODetail />} />
         <Route path="/orders" element={<Orders />} />
+        <Route path="/draft-orders" element={<DraftOrders />} />
         <Route path="/inventory/products" element={<Products />} />
         <Route path="/inventory/adjustments" element={<Adjustments />} />
         <Route path="/inventory/adjustments/:id" element={<AdjustmentDetail />} />
