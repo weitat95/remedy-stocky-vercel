@@ -46,3 +46,9 @@ export async function archiveAdjustment(id) {
   const res = await apiClient.put(`/adjustments/${id}/archive`);
   return res.data.data;
 }
+
+// Correct reason/notes on an already-applied adjustment without reversing it.
+export async function editAdjustment(id, body) {
+  const res = await apiClient.put(`/adjustments/${id}/edit`, body);
+  return res.data.data;
+}

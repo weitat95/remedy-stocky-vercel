@@ -10,7 +10,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getAdjustment, createAdjustment, updateAdjustment,
   saveAdjustment, archiveAdjustment, deleteAdjustment,
-  reverseAdjustment, getInventoryLevel,
+  reverseAdjustment, getInventoryLevel, editAdjustment,
 } from '../../api/adjustments.js';
 import { getLocations } from '../../api/inventory.js';
 import { getProducts } from '../../api/products.js';
@@ -407,6 +407,20 @@ export default function AdjustmentDetail() {
     onError: (e) => setSaveError(e.message),
   });
 
+  // Reason/notes are locked (read-only) on an applied adjustment until this is
+  // toggled on via the "Edit" button — prevents accidental in-place edits.
+  const [editingMeta, setEditingMeta] = useState(false);
+
+  const editMutation = useMutation({
+    mutationFn: (body) => editAdjustment(id, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['adjustments'] });
+      queryClient.invalidateQueries({ queryKey: ['adjustment', id] });
+      setEditingMeta(false);
+    },
+    onError: (e) => setSaveError(e.message),
+  });
+
   const reverseMutation = useMutation({
     mutationFn: () => reverseAdjustment(id),
     onSuccess: (data) => {
@@ -435,6 +449,32 @@ export default function AdjustmentDetail() {
       saveMutation.mutate(buildBody());
     }
   }, [isNew, buildBody, createMutation, saveMutation]);
+
+  // Reason/notes can still be corrected after the adjustment is applied — this
+  // updates just those two fields (with an audit trail) instead of requiring a
+  // full reversal just to fix a typo or add context.
+  const existingReason = existing?.reason ?? '';
+  const existingNotes = existing?.notes ?? '';
+  const editDirty = isArchived && (reason !== existingReason || notes !== existingNotes);
+
+  const handleEditSave = useCallback(() => {
+    setSaveError(null);
+    editMutation.mutate({ reason, notes });
+  }, [reason, notes, editMutation]);
+
+  const handleEditStart = useCallback(() => {
+    setSaveError(null);
+    setEditingMeta(true);
+  }, []);
+
+  const handleEditCancel = useCallback(() => {
+    setSaveError(null);
+    setEditingMeta(false);
+    setReason(existingReason);
+    const preset = reasonPresets.find((p) => p.code === existingReason);
+    setReasonInput(preset ? formatReason(preset) : existingReason);
+    setNotes(existingNotes);
+  }, [existingReason, existingNotes, reasonPresets]);
 
   // ── Reverse confirmation ─────────────────────────────────────────────────
   const [reverseModalOpen, setReverseModalOpen] = useState(false);
@@ -481,14 +521,27 @@ export default function AdjustmentDetail() {
       titleMetadata={isArchived
         ? <Badge tone="success">Applied</Badge>
         : <Badge>Open</Badge>}
-      primaryAction={isArchived ? undefined : {
+      primaryAction={isArchived ? (editingMeta ? {
+        content: 'Save changes',
+        onAction: handleEditSave,
+        loading: editMutation.isPending,
+        disabled: !editDirty,
+      } : {
+        content: 'Edit',
+        onAction: handleEditStart,
+      }) : {
         content: 'Save',
         onAction: handleSave,
         loading: saveMutation.isPending || createMutation.isPending,
         disabled: lineItems.length === 0 || !locationId,
       }}
       secondaryActions={[
-        ...(isArchived ? [{
+        ...(isArchived ? [
+          ...(editingMeta ? [{
+            content: 'Cancel',
+            onAction: handleEditCancel,
+            disabled: editMutation.isPending,
+          }] : []), {
           content: 'Download CSV',
           onAction: () => downloadCSV(existing, existing.lineItems, locationName),
         }, ...(!existing?.reversal ? [{
@@ -777,7 +830,7 @@ export default function AdjustmentDetail() {
                       onChange={handleReasonInputChange}
                       placeholder="Select or type a reason…"
                       autoComplete="off"
-                      disabled={isArchived}
+                      disabled={isArchived && !editingMeta}
                     />
                   }
                 />
@@ -789,7 +842,7 @@ export default function AdjustmentDetail() {
                   onChange={setNotes}
                   autoComplete="off"
                   multiline={2}
-                  disabled={isArchived}
+                  disabled={isArchived && !editingMeta}
                 />
                 <TextField
                   label="Employee"
@@ -801,6 +854,32 @@ export default function AdjustmentDetail() {
               </FormLayout.Group>
             </FormLayout>
           </Card>
+
+          {existing?.editLogs?.length > 0 && (
+            <Card>
+              <BlockStack gap="300">
+                <Text variant="headingSm" as="h3">Edit history</Text>
+                <BlockStack gap="200">
+                  {existing.editLogs.map((log) => (
+                    <BlockStack gap="050" key={log.id}>
+                      <Text variant="bodySm">
+                        <Text as="span" fontWeight="semibold">
+                          {log.field === 'reason' ? 'Reason' : 'Notes'}
+                        </Text>
+                        {' changed from '}
+                        <Text as="span" tone="subdued">"{log.oldValue || '—'}"</Text>
+                        {' to '}
+                        <Text as="span" tone="subdued">"{log.newValue || '—'}"</Text>
+                      </Text>
+                      <Text variant="bodySm" tone="subdued">
+                        {new Date(log.editedAt).toLocaleString()}{log.editedBy ? ` · ${log.editedBy}` : ''}
+                      </Text>
+                    </BlockStack>
+                  ))}
+                </BlockStack>
+              </BlockStack>
+            </Card>
+          )}
         </Layout.Section>
       </Layout>
 
