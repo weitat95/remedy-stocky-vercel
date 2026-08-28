@@ -4,13 +4,12 @@ import {
   InlineStack, BlockStack, Banner, Spinner, Pagination, Box, Tabs,
   Modal, TextField, ResourceList, ResourceItem,
 } from '@shopify/polaris';
-import { ChevronUpIcon, ChevronDownIcon } from '@shopify/polaris-icons';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getAdjustments, deleteAdjustment } from '../../api/adjustments.js';
 import {
   getAdjustmentReasons, createAdjustmentReason,
-  updateAdjustmentReason, deleteAdjustmentReason, reorderAdjustmentReasons,
+  updateAdjustmentReason, deleteAdjustmentReason,
 } from '../../api/adjustmentReasons.js';
 
 const TABS = [
@@ -114,19 +113,6 @@ export default function Adjustments() {
     mutationFn: deleteAdjustmentReason,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['adjustment-reasons'] }),
   });
-
-  const reorderMutation = useMutation({
-    mutationFn: reorderAdjustmentReasons,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['adjustment-reasons'] }),
-  });
-
-  const moveReason = useCallback((index, direction) => {
-    const swapIndex = index + direction;
-    if (swapIndex < 0 || swapIndex >= reasonPresets.length) return;
-    const reordered = [...reasonPresets];
-    [reordered[index], reordered[swapIndex]] = [reordered[swapIndex], reordered[index]];
-    reorderMutation.mutate(reordered.map((p) => p.id));
-  }, [reasonPresets, reorderMutation]);
 
   const startEdit = useCallback((preset) => {
     setEditingId(preset.id);
@@ -303,7 +289,7 @@ export default function Adjustments() {
           <ResourceList
             resourceName={{ singular: 'reason', plural: 'reasons' }}
             items={reasonPresets}
-            renderItem={(preset, _id, index) => (
+            renderItem={(preset) => (
               <ResourceItem
                 id={preset.id}
                 shortcutActions={
@@ -354,24 +340,6 @@ export default function Adjustments() {
                   </InlineStack>
                 ) : (
                   <InlineStack gap="200" blockAlign="center">
-                    <InlineStack gap="0" blockAlign="center">
-                      <Button
-                        icon={ChevronUpIcon}
-                        variant="tertiary"
-                        size="micro"
-                        accessibilityLabel="Move up"
-                        disabled={index === 0 || reorderMutation.isPending}
-                        onClick={() => moveReason(index, -1)}
-                      />
-                      <Button
-                        icon={ChevronDownIcon}
-                        variant="tertiary"
-                        size="micro"
-                        accessibilityLabel="Move down"
-                        disabled={index === reasonPresets.length - 1 || reorderMutation.isPending}
-                        onClick={() => moveReason(index, 1)}
-                      />
-                    </InlineStack>
                     <Badge>{preset.code}</Badge>
                     <Text variant="bodyMd">{preset.label}</Text>
                   </InlineStack>

@@ -26,7 +26,7 @@ function matchLabel(product, variant) {
 }
 
 function formatReason(preset) {
-  return `${preset.code} - ${preset.label}`;
+  return preset.code ?? '—';
 }
 
 const ADJUSTMENT_CSV_EXAMPLE = [
@@ -334,11 +334,11 @@ export default function AdjustmentDetail() {
   // ── Reason combobox ───────────────────────────────────────────────────────
   // Selecting an option stores its `code` (value) in `reason`; "CODE - Label" is shown/typed
   // in `reasonInput`. Free-typed text that matches no preset is stored verbatim as-is.
-  // reasonPresets is already sorted by sortOrder — filter/map below preserve that order.
+  // reasonPresets is already sorted alphanumerically by code — filter/map below preserve that order.
   const reasonOpts = reasonPresets
     .filter((p) => !reasonInput
-      || p.code.toLowerCase().includes(reasonInput.toLowerCase())
-      || p.label.toLowerCase().includes(reasonInput.toLowerCase()))
+      || (p.code ?? '').toLowerCase().includes(reasonInput.toLowerCase())
+      || (p.label ?? '').toLowerCase().includes(reasonInput.toLowerCase()))
     .map((p) => ({ value: p.code, label: formatReason(p) }));
 
   const handleReasonInputChange = useCallback((value) => {

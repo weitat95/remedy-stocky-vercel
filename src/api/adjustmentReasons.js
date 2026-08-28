@@ -19,8 +19,3 @@ export async function deleteAdjustmentReason(id) {
   const res = await apiClient.delete(`/adjustment-reasons/${id}`);
   return res.data.data;
 }
-
-export async function reorderAdjustmentReasons(ids) {
-  const res = await apiClient.put('/adjustment-reasons/reorder', { ids });
-  return res.data.data;
-}
