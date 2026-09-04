@@ -15,6 +15,7 @@ import {
   InventoryIcon,
   PackageIcon,
   StoreIcon,
+  WifiIcon,
 } from '@shopify/polaris-icons';
 
 import { getMe, logout as logoutApi } from './api/auth.js';
@@ -33,6 +34,7 @@ import Adjustments from './pages/Inventory/Adjustments.jsx';
 import AdjustmentDetail from './pages/Inventory/AdjustmentDetail.jsx';
 import Transfers from './pages/Transfers/index.jsx';
 import DraftOrders from './pages/DraftOrders/index.jsx';
+import Devices from './pages/Devices/index.jsx';
 import Reports from './pages/Reports/index.jsx';
 
 export default function App() {
@@ -103,6 +105,13 @@ export default function App() {
             url: '/locations',
             onClick: () => navigate('/locations'),
             selected: is('/locations'),
+          },
+          {
+            label: 'Devices',
+            icon: WifiIcon,
+            url: '/devices',
+            onClick: () => navigate('/devices'),
+            selected: is('/devices'),
           },
           {
             label: 'Purchases',
@@ -245,6 +254,7 @@ export default function App() {
         <Route path="/suppliers" element={<Suppliers />} />
         <Route path="/suppliers/:id" element={<SupplierDetail />} />
         <Route path="/locations" element={<Locations />} />
+        <Route path="/devices" element={<Devices />} />
         <Route path="/purchase-orders" element={<PurchaseOrders />} />
         <Route path="/purchase-orders/:id" element={<PODetail />} />
         <Route path="/orders" element={<Orders />} />
