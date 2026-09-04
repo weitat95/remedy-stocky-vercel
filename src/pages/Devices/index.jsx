@@ -8,7 +8,9 @@ import { getDevices, createDevice, updateDevice, deleteDevice } from '../../api/
 
 const UNASSIGNED = '';
 
-const emptyForm = { deviceId: '', shopName: '', apiKey: '', locationId: UNASSIGNED, isActive: true };
+// shopName is not in the form — it's derived server-side from the assigned
+// Shopify location (or the deviceId when unassigned).
+const emptyForm = { deviceId: '', apiKey: '', locationId: UNASSIGNED, isActive: true };
 
 export default function Devices() {
   const queryClient = useQueryClient();
@@ -21,6 +23,7 @@ export default function Devices() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null); // original deviceId, or null when creating
   const [form, setForm] = useState(emptyForm);
+  const [currentShopName, setCurrentShopName] = useState(''); // existing shopName when editing
   const [formError, setFormError] = useState(null);
 
   const setField = useCallback((key) => (value) => setForm((f) => ({ ...f, [key]: value })), []);
@@ -28,6 +31,7 @@ export default function Devices() {
   const openCreate = useCallback(() => {
     setEditingId(null);
     setForm(emptyForm);
+    setCurrentShopName('');
     setFormError(null);
     setModalOpen(true);
   }, []);
@@ -36,11 +40,11 @@ export default function Devices() {
     setEditingId(d.deviceId);
     setForm({
       deviceId: d.deviceId,
-      shopName: d.shopName,
       apiKey: d.apiKey,
       locationId: d.locationId || UNASSIGNED,
       isActive: d.isActive,
     });
+    setCurrentShopName(d.shopName);
     setFormError(null);
     setModalOpen(true);
   }, []);
@@ -51,7 +55,6 @@ export default function Devices() {
     mutationFn: () => {
       const payload = {
         deviceId: form.deviceId.trim(),
-        shopName: form.shopName.trim(),
         apiKey: form.apiKey.trim(),
         locationId: form.locationId || null,
         isActive: form.isActive,
@@ -81,7 +84,13 @@ export default function Devices() {
     ...locations.map((l) => ({ label: l.name, value: l.id })),
   ];
 
-  const canSave = form.deviceId.trim() && form.shopName.trim() && form.apiKey.trim();
+  const canSave = form.deviceId.trim() && form.apiKey.trim();
+
+  // What shopName will become after save: the picked location's name, else the
+  // current value (edit) or the deviceId (create).
+  const selectedLocationName = locations.find((l) => l.id === form.locationId)?.name || null;
+  const resultingShopName =
+    selectedLocationName || currentShopName || form.deviceId.trim() || '—';
 
   const rows = devices.map((d, index) => (
     <IndexTable.Row id={d.deviceId} key={d.deviceId} position={index} onClick={() => openEdit(d)}>
@@ -186,12 +195,6 @@ export default function Devices() {
               }
             />
             <TextField
-              label="Shop name"
-              value={form.shopName}
-              onChange={setField('shopName')}
-              autoComplete="off"
-            />
-            <TextField
               label="API key"
               value={form.apiKey}
               onChange={setField('apiKey')}
@@ -204,7 +207,7 @@ export default function Devices() {
               options={locationOptions}
               value={form.locationId}
               onChange={setField('locationId')}
-              helpText="Its foot traffic joins to this location's daily sales in the conversion report."
+              helpText={`Its foot traffic joins to this location's daily sales in the conversion report. Sets the shop name to “${resultingShopName}”.`}
             />
             <Checkbox
               label="Active"
