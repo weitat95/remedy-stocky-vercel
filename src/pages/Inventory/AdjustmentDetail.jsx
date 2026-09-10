@@ -501,6 +501,11 @@ export default function AdjustmentDetail() {
   const title = isNew ? 'New Adjustment' : `Adjustment #${existing?.adjNumber ?? ''}`;
   const locationName = locations.find((l) => l.id === (existing?.locationId ?? locationId))?.name;
 
+  const subtitle = isNew ? undefined : [
+    existing?.createdAt && `Created ${new Date(existing.createdAt).toLocaleString()}`,
+    isArchived && existing?.appliedAt && `Applied ${new Date(existing.appliedAt).toLocaleString()}`,
+  ].filter(Boolean).join(' · ') || undefined;
+
   // ── Column toggle ─────────────────────────────────────────────────────────
   const toggleCol = (colId) => {
     setVisibleCols((prev) => {
@@ -517,6 +522,7 @@ export default function AdjustmentDetail() {
   return (
     <Page
       title={title}
+      subtitle={subtitle}
       backAction={{ content: 'Adjustments', url: '/inventory/adjustments' }}
       titleMetadata={isArchived
         ? <Badge tone="success">Applied</Badge>
