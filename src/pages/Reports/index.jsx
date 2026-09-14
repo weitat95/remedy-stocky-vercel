@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   Page, Card, Tabs, DataTable, Text, Badge, Spinner, Button, Checkbox,
-  Banner, EmptyState, InlineStack, BlockStack, Select, TextField, Tooltip, Icon, Pagination, Box, InlineGrid,
+  Banner, EmptyState, InlineStack, BlockStack, Select, TextField, Tooltip, Icon, Pagination, Box, InlineGrid, Toast,
 } from '@shopify/polaris';
 import { QuestionCircleIcon } from '@shopify/polaris-icons';
 import { useQuery } from '@tanstack/react-query';
@@ -11,6 +11,16 @@ import { getLocations } from '../../api/inventory.js';
 import { downloadCSVFile } from '../../utils/csv.js';
 
 const FOOT_TRAFFIC_PAGE_SIZE = 50;
+const HIGHLIGHT_DEFAULTS_KEY = 'footTrafficHighlightDefaults';
+
+function loadHighlightDefaults() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(HIGHLIGHT_DEFAULTS_KEY) || '{}');
+    return { salesHighlight: saved.salesHighlight ?? '', conversionHighlight: saved.conversionHighlight ?? '' };
+  } catch {
+    return { salesHighlight: '', conversionHighlight: '' };
+  }
+}
 
 function isoDaysAgo(days) {
   const d = new Date();
@@ -240,11 +250,13 @@ function FootTrafficReport() {
   const [page, setPage] = useState(0);
   const [sortIndex, setSortIndex] = useState(0); // Date
   const [sortDirection, setSortDirection] = useState('descending');
-  const [salesHighlight, setSalesHighlight] = useState('');
-  const [conversionHighlight, setConversionHighlight] = useState('');
+  const [{ salesHighlight, conversionHighlight }, setHighlights] = useState(loadHighlightDefaults);
+  const setSalesHighlight = (v) => setHighlights((h) => ({ ...h, salesHighlight: v }));
+  const setConversionHighlight = (v) => setHighlights((h) => ({ ...h, conversionHighlight: v }));
   const [showEmptyDays, setShowEmptyDays] = useState(false);
   const [viewMode, setViewMode] = useState('table');
   const [calendarMetric, setCalendarMetric] = useState('visitors');
+  const [toast, setToast] = useState(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['reports', 'location-daily-sales', from, to],
@@ -357,6 +369,11 @@ function FootTrafficReport() {
     );
   }, [sortedRows, from, to, locationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const handleSaveHighlightDefaults = useCallback(() => {
+    localStorage.setItem(HIGHLIGHT_DEFAULTS_KEY, JSON.stringify({ salesHighlight, conversionHighlight }));
+    setToast({ message: 'Saved as default highlight thresholds' });
+  }, [salesHighlight, conversionHighlight]);
+
   return (
     <BlockStack gap="400">
       <InlineStack align="space-between" blockAlign="center">
@@ -414,6 +431,7 @@ function FootTrafficReport() {
                 autoComplete="off" placeholder="e.g. 10" suffix="%"
               />
             </InlineStack>
+            <Button onClick={handleSaveHighlightDefaults} variant="plain">Save as default</Button>
           </InlineStack>
         </InlineStack>
       )}
@@ -492,6 +510,7 @@ function FootTrafficReport() {
           </BlockStack>
         )
       }
+      {toast && <Toast content={toast.message} onDismiss={() => setToast(null)} duration={2500} />}
     </BlockStack>
   );
 }
