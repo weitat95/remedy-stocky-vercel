@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   Page, Card, Tabs, DataTable, Text, Badge, Spinner, Button, Checkbox,
-  Banner, EmptyState, InlineStack, BlockStack, Select, TextField, Tooltip, Icon, Pagination, Box,
+  Banner, EmptyState, InlineStack, BlockStack, Select, TextField, Tooltip, Icon, Pagination, Box, InlineGrid,
 } from '@shopify/polaris';
 import { QuestionCircleIcon } from '@shopify/polaris-icons';
 import { useQuery } from '@tanstack/react-query';
@@ -152,6 +152,87 @@ function compareFootTrafficRows(a, b, field) {
   return av - bv;
 }
 
+// Metric options for the Calendar view's day-cell heatmap.
+const CALENDAR_METRICS = [
+  { value: 'visitors', label: 'Visitors', format: (v) => (v != null ? String(v) : '—') },
+  { value: 'netSales', label: 'Net Sales', format: (v) => `RM ${Number(v).toFixed(0)}` },
+  { value: 'orderCount', label: 'Orders', format: (v) => (v != null ? String(v) : '—') },
+  { value: 'conversionRate', label: 'Conversion Rate', format: (v) => (v != null ? `${(v * 100).toFixed(1)}%` : '—') },
+  { value: 'peopleIn', label: 'People In', format: (v) => (v != null ? String(v) : '—') },
+  { value: 'peopleOut', label: 'People Out', format: (v) => (v != null ? String(v) : '—') },
+];
+
+const MAX_CALENDAR_MONTHS = 12;
+
+// Collapse rows (one per location per date) down to one aggregate row per date —
+// the Calendar view always shows every day regardless of location filter, so with
+// "All locations" selected this sums across locations for the day (visitors is
+// re-derived as min(peopleIn, peopleOut) on the summed totals, same rule the
+// backend applies per device, not averaged from each location's own rate).
+function groupRowsByDate(rows) {
+  const byDate = {};
+  for (const r of rows) {
+    const agg = (byDate[r.date] ||= {
+      date: r.date, orderCount: 0, netSales: 0, peopleIn: 0, peopleOut: 0, net: 0, hasTraffic: false,
+    });
+    agg.orderCount += r.orderCount;
+    agg.netSales += r.netSales;
+    if (r.peopleIn != null) agg.hasTraffic = true;
+    agg.peopleIn += r.peopleIn ?? 0;
+    agg.peopleOut += r.peopleOut ?? 0;
+    agg.net += r.net ?? 0;
+  }
+  return Object.fromEntries(Object.values(byDate).map((agg) => {
+    const visitors = agg.hasTraffic ? Math.min(agg.peopleIn, agg.peopleOut) : null;
+    return [agg.date, {
+      date: agg.date,
+      orderCount: agg.orderCount,
+      netSales: agg.netSales,
+      peopleIn: agg.hasTraffic ? agg.peopleIn : null,
+      peopleOut: agg.hasTraffic ? agg.peopleOut : null,
+      net: agg.hasTraffic ? agg.net : null,
+      visitors,
+      conversionRate: visitors ? Number((agg.orderCount / visitors).toFixed(4)) : null,
+    }];
+  }));
+}
+
+// [{ year, month (0-indexed) }] spanning from..to (both YYYY-MM-DD), capped at
+// MAX_CALENDAR_MONTHS so an accidentally huge range can't render forever.
+function monthsBetween(fromStr, toStr) {
+  const start = new Date(`${fromStr}T00:00:00Z`);
+  const end = new Date(`${toStr}T00:00:00Z`);
+  const months = [];
+  let cur = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+  const endMonth = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1));
+  while (cur <= endMonth && months.length < MAX_CALENDAR_MONTHS) {
+    months.push({ year: cur.getUTCFullYear(), month: cur.getUTCMonth() });
+    cur = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth() + 1, 1));
+  }
+  return months;
+}
+
+// Leading `null`s for alignment (week starts Sunday) + one YYYY-MM-DD string per
+// day of the month.
+function calendarCells(year, month) {
+  const firstWeekday = new Date(Date.UTC(year, month, 1)).getUTCDay();
+  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const cells = new Array(firstWeekday).fill(null);
+  for (let d = 1; d <= daysInMonth; d++) {
+    cells.push(`${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+  }
+  return cells;
+}
+
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTH_FORMATTER = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+function heatBackground(value, max) {
+  if (value == null || !(max > 0) || value <= 0) return 'transparent';
+  const alpha = Math.min(1, value / max);
+  return `rgba(0, 128, 96, ${(0.1 + alpha * 0.45).toFixed(2)})`;
+}
+
 function FootTrafficReport() {
   const [from, setFrom] = useState(() => isoDaysAgo(30));
   const [to, setTo] = useState(() => isoDaysAgo(0));
@@ -162,6 +243,8 @@ function FootTrafficReport() {
   const [salesHighlight, setSalesHighlight] = useState('');
   const [conversionHighlight, setConversionHighlight] = useState('');
   const [showEmptyDays, setShowEmptyDays] = useState(false);
+  const [viewMode, setViewMode] = useState('table');
+  const [calendarMetric, setCalendarMetric] = useState('visitors');
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['reports', 'location-daily-sales', from, to],
@@ -180,6 +263,19 @@ function FootTrafficReport() {
   // range doesn't drown out days that actually had activity.
   const isEmptyRow = (r) => r.orderCount === 0 && (r.peopleIn ?? 0) === 0 && (r.peopleOut ?? 0) === 0;
   const filteredRows = showEmptyDays ? locationFilteredRows : locationFilteredRows.filter((r) => !isEmptyRow(r));
+
+  // Calendar view always shows every day (that's the point of it) regardless of the
+  // "Show empty days" table toggle, so it's built off locationFilteredRows directly.
+  const dateAgg = groupRowsByDate(locationFilteredRows);
+  const calendarMonths = monthsBetween(from, to);
+  const calendarMetricConfig = CALENDAR_METRICS.find((m) => m.value === calendarMetric);
+  const calendarMax = Math.max(
+    0,
+    ...Object.values(dateAgg)
+      .filter((r) => r.date >= from && r.date <= to)
+      .map((r) => r[calendarMetric])
+      .filter((v) => v != null)
+  );
 
   const sortedRows = [...filteredRows].sort((a, b) => {
     const dir = sortDirection === 'descending' ? -1 : 1;
@@ -275,39 +371,99 @@ function FootTrafficReport() {
             <TextField labelHidden label="To" type="date" value={to} onChange={(v) => { setTo(v); setPage(0); }} autoComplete="off" />
           </InlineStack>
           <Select label="Location" labelInline options={locationOptions} value={locationId} onChange={(v) => { setLocationId(v); setPage(0); }} />
-          <Checkbox
-            label="Show empty days (0 in/out)"
-            checked={showEmptyDays}
-            onChange={(checked) => { setShowEmptyDays(checked); setPage(0); }}
+          <Select
+            label="View" labelInline
+            options={[{ label: 'Table', value: 'table' }, { label: 'Calendar', value: 'calendar' }]}
+            value={viewMode} onChange={setViewMode}
           />
+          {viewMode === 'calendar' ? (
+            <Select
+              label="Metric" labelInline
+              options={CALENDAR_METRICS.map((m) => ({ label: m.label, value: m.value }))}
+              value={calendarMetric} onChange={setCalendarMetric}
+            />
+          ) : (
+            <Checkbox
+              label="Show empty days (0 in/out)"
+              checked={showEmptyDays}
+              onChange={(checked) => { setShowEmptyDays(checked); setPage(0); }}
+            />
+          )}
           <Button onClick={handleExport} disabled={filteredRows.length === 0}>Export CSV</Button>
         </InlineStack>
       </InlineStack>
-      <InlineStack align="end" blockAlign="center">
-        <InlineStack gap="200" blockAlign="center">
-          <Text as="span" tone="subdued">Highlight</Text>
-          <InlineStack gap="100" blockAlign="center" wrap={false}>
-            <Text as="span" tone="subdued">Net Sales ≥ RM</Text>
-            <TextField
-              labelHidden label="Highlight Net Sales above"
-              type="number" value={salesHighlight}
-              onChange={(v) => setSalesHighlight(v)}
-              autoComplete="off" placeholder="e.g. 500"
-            />
-          </InlineStack>
-          <InlineStack gap="100" blockAlign="center" wrap={false}>
-            <Text as="span" tone="subdued">Conversion Rate ≥</Text>
-            <TextField
-              labelHidden label="Highlight conversion rate above"
-              type="number" value={conversionHighlight}
-              onChange={(v) => setConversionHighlight(v)}
-              autoComplete="off" placeholder="e.g. 10" suffix="%"
-            />
+      {viewMode === 'table' && (
+        <InlineStack align="end" blockAlign="center">
+          <InlineStack gap="200" blockAlign="center">
+            <Text as="span" tone="subdued">Highlight</Text>
+            <InlineStack gap="100" blockAlign="center" wrap={false}>
+              <Text as="span" tone="subdued">Net Sales ≥ RM</Text>
+              <TextField
+                labelHidden label="Highlight Net Sales above"
+                type="number" value={salesHighlight}
+                onChange={(v) => setSalesHighlight(v)}
+                autoComplete="off" placeholder="e.g. 500"
+              />
+            </InlineStack>
+            <InlineStack gap="100" blockAlign="center" wrap={false}>
+              <Text as="span" tone="subdued">Conversion Rate ≥</Text>
+              <TextField
+                labelHidden label="Highlight conversion rate above"
+                type="number" value={conversionHighlight}
+                onChange={(v) => setConversionHighlight(v)}
+                autoComplete="off" placeholder="e.g. 10" suffix="%"
+              />
+            </InlineStack>
           </InlineStack>
         </InlineStack>
-      </InlineStack>
+      )}
       {error && <Banner tone="critical">{error.message}</Banner>}
-      {isLoading ? <Spinner /> : rows.length === 0
+      {isLoading ? <Spinner /> : viewMode === 'calendar' ? (
+        allRows.length === 0
+          ? <EmptyState heading="No foot traffic data for this range" image="" />
+          : (
+            <BlockStack gap="400">
+              <InlineStack gap="200" blockAlign="center">
+                <Text as="span" tone="subdued">Darker = higher {calendarMetricConfig.label.toLowerCase()}</Text>
+              </InlineStack>
+              {calendarMonths.map(({ year, month }) => (
+                <Card key={`${year}-${month}`}>
+                  <BlockStack gap="300">
+                    <Text variant="headingSm">{MONTH_FORMATTER.format(new Date(Date.UTC(year, month, 1)))}</Text>
+                    <InlineGrid columns={7} gap="100">
+                      {WEEKDAY_LABELS.map((w) => (
+                        <Text key={w} as="span" tone="subdued" alignment="center">{w}</Text>
+                      ))}
+                      {calendarCells(year, month).map((dateStr, i) => {
+                        if (!dateStr) return <div key={`blank-${i}`} />;
+                        const inRange = dateStr >= from && dateStr <= to;
+                        const value = inRange ? dateAgg[dateStr]?.[calendarMetric] ?? null : null;
+                        return (
+                          <div
+                            key={dateStr}
+                            style={{
+                              minHeight: 60,
+                              borderRadius: 6,
+                              border: '1px solid var(--p-color-border-secondary, #e3e3e3)',
+                              padding: '6px',
+                              opacity: inRange ? 1 : 0.35,
+                              background: inRange ? heatBackground(value, calendarMax) : 'transparent',
+                            }}
+                          >
+                            <Text as="span" tone="subdued">{Number(dateStr.slice(8, 10))}</Text>
+                            {inRange && (
+                              <Text as="p" fontWeight="semibold">{calendarMetricConfig.format(value)}</Text>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </InlineGrid>
+                  </BlockStack>
+                </Card>
+              ))}
+            </BlockStack>
+          )
+      ) : rows.length === 0
         ? <EmptyState heading="No foot traffic data for this range" image="" />
         : (
           <BlockStack gap="200">
@@ -379,7 +535,7 @@ export default function Reports() {
   };
 
   return (
-    <Page title="Reports">
+    <Page title="Reports" fullWidth={TABS[activeTab]?.path === 'foot-traffic'}>
       <Card padding="0">
         <Tabs tabs={TABS} selected={activeTab} onSelect={handleTabChange}>
           <div style={{ padding: '1.25rem' }}>{content()}</div>
