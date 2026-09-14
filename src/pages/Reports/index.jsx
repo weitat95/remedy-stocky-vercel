@@ -1,11 +1,16 @@
 import React, { useState, useCallback } from 'react';
 import {
-  Page, Card, Tabs, DataTable, Text, Badge, Spinner,
-  Banner, EmptyState, InlineStack, BlockStack, Select, TextField,
+  Page, Card, Tabs, DataTable, Text, Badge, Spinner, Button,
+  Banner, EmptyState, InlineStack, BlockStack, Select, TextField, Tooltip, Icon, Pagination, Box,
 } from '@shopify/polaris';
+import { QuestionCircleIcon } from '@shopify/polaris-icons';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useLocation, Routes, Route } from 'react-router-dom';
 import { getSlowMoving, getReorderReport, getPOHistory, getStockOnHand, getLocationDailySales } from '../../api/reports.js';
+import { getLocations } from '../../api/inventory.js';
+import { downloadCSVFile } from '../../utils/csv.js';
+
+const FOOT_TRAFFIC_PAGE_SIZE = 50;
 
 function isoDaysAgo(days) {
   const d = new Date();
@@ -124,40 +129,141 @@ function POHistoryReport() {
   );
 }
 
+// index into a foot-traffic row — order matches the DataTable headings/columns
+const FOOT_TRAFFIC_SORT_FIELDS = [
+  'date', 'locationName', 'peopleIn', 'peopleOut', 'net', 'visitors', 'netSales', 'orderCount', 'conversionRate',
+];
+
+function compareFootTrafficRows(a, b, field) {
+  const av = a[field];
+  const bv = b[field];
+  if (av == null && bv == null) return 0;
+  if (av == null) return -1; // nulls (e.g. no matching device) sort first
+  if (bv == null) return 1;
+  if (typeof av === 'string') return av.localeCompare(bv);
+  return av - bv;
+}
+
 function FootTrafficReport() {
   const [from, setFrom] = useState(() => isoDaysAgo(30));
   const [to, setTo] = useState(() => isoDaysAgo(0));
+  const [locationId, setLocationId] = useState('all');
+  const [page, setPage] = useState(0);
+  const [sortIndex, setSortIndex] = useState(0); // Date
+  const [sortDirection, setSortDirection] = useState('descending');
+
   const { data, isLoading, error } = useQuery({
     queryKey: ['reports', 'location-daily-sales', from, to],
     queryFn: () => getLocationDailySales({ from, to }),
   });
-  const rows = (data?.data || []).map((r) => [
+  const { data: locationsData } = useQuery({ queryKey: ['locations'], queryFn: getLocations });
+
+  const allRows = data?.data || [];
+  const locationOptions = [
+    { label: 'All locations', value: 'all' },
+    ...(locationsData?.data || []).map((l) => ({ label: l.name, value: l.id })),
+  ];
+  const filteredRows = locationId === 'all' ? allRows : allRows.filter((r) => r.locationId === locationId);
+
+  const sortedRows = [...filteredRows].sort((a, b) => {
+    const dir = sortDirection === 'descending' ? -1 : 1;
+    return compareFootTrafficRows(a, b, FOOT_TRAFFIC_SORT_FIELDS[sortIndex]) * dir;
+  });
+
+  const pageCount = Math.max(1, Math.ceil(sortedRows.length / FOOT_TRAFFIC_PAGE_SIZE));
+  const clampedPage = Math.min(page, pageCount - 1);
+  const pagedRows = sortedRows.slice(
+    clampedPage * FOOT_TRAFFIC_PAGE_SIZE,
+    clampedPage * FOOT_TRAFFIC_PAGE_SIZE + FOOT_TRAFFIC_PAGE_SIZE
+  );
+
+  const toRow = (r) => [
     r.date,
     r.locationName || '—',
     r.peopleIn ?? '—',
     r.peopleOut ?? '—',
     r.net ?? '—',
-    `$${Number(r.netSales).toFixed(2)}`,
+    r.visitors ?? '—',
+    `RM ${Number(r.netSales).toFixed(2)}`,
     r.orderCount,
     r.conversionRate != null ? `${(r.conversionRate * 100).toFixed(1)}%` : '—',
-  ]);
+  ];
+  const rows = pagedRows.map(toRow);
+  const headings = ['Date', 'Location', 'People In', 'People Out', 'Net', 'Visitors', 'Net Sales', 'Orders', 'Conversion Rate'];
+
+  const visitorsHeading = (
+    <Tooltip content="min(People In, People Out) per device — a miscount in one direction shouldn't skew the count">
+      <InlineStack gap="100" blockAlign="center" wrap={false}>
+        <Text as="span">Visitors</Text>
+        <Icon source={QuestionCircleIcon} tone="subdued" />
+      </InlineStack>
+    </Tooltip>
+  );
+  const conversionRateHeading = (
+    <Tooltip content="Orders ÷ Visitors, where Visitors = min(People In, People Out) per device">
+      <InlineStack gap="100" blockAlign="center" wrap={false}>
+        <Text as="span">Conversion Rate</Text>
+        <Icon source={QuestionCircleIcon} tone="subdued" />
+      </InlineStack>
+    </Tooltip>
+  );
+
+  const handleSort = useCallback((index, direction) => {
+    setSortIndex(index);
+    setSortDirection(direction);
+    setPage(0);
+  }, []);
+
+  const handleExport = useCallback(() => {
+    // Exports every row matching the current date range + location filter,
+    // in the current sort order — not just the page on screen.
+    const locationLabel = locationOptions.find((o) => o.value === locationId)?.label || 'all';
+    downloadCSVFile(
+      `foot-traffic_${from}_to_${to}_${locationLabel.toLowerCase().replace(/\s+/g, '-')}.csv`,
+      [headings, ...sortedRows.map(toRow)]
+    );
+  }, [sortedRows, from, to, locationId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <BlockStack gap="400">
       <InlineStack align="space-between" blockAlign="center">
         <Text variant="headingMd">Foot Traffic</Text>
         <InlineStack gap="200">
-          <TextField label="From" labelInline type="date" value={from} onChange={setFrom} autoComplete="off" />
-          <TextField label="To" labelInline type="date" value={to} onChange={setTo} autoComplete="off" />
+          <TextField label="From" labelInline type="date" value={from} onChange={(v) => { setFrom(v); setPage(0); }} autoComplete="off" />
+          <TextField label="To" labelInline type="date" value={to} onChange={(v) => { setTo(v); setPage(0); }} autoComplete="off" />
+          <Select label="Location" labelInline options={locationOptions} value={locationId} onChange={(v) => { setLocationId(v); setPage(0); }} />
+          <Button onClick={handleExport} disabled={filteredRows.length === 0}>Export CSV</Button>
         </InlineStack>
       </InlineStack>
       {error && <Banner tone="critical">{error.message}</Banner>}
       {isLoading ? <Spinner /> : rows.length === 0
         ? <EmptyState heading="No foot traffic data for this range" image="" />
-        : <DataTable
-            columnContentTypes={['text', 'text', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric']}
-            headings={['Date', 'Location', 'People In', 'People Out', 'Net', 'Net Sales', 'Orders', 'Conversion Rate']}
-            rows={rows}
-          />
+        : (
+          <BlockStack gap="200">
+            <DataTable
+              columnContentTypes={['text', 'text', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric']}
+              headings={['Date', 'Location', 'People In', 'People Out', 'Net', visitorsHeading, 'Net Sales', 'Orders', conversionRateHeading]}
+              rows={rows}
+              sortable={[true, true, true, true, true, true, true, true, true]}
+              defaultSortDirection="descending"
+              initialSortColumnIndex={sortIndex}
+              onSort={handleSort}
+            />
+            {pageCount > 1 && (
+              <Box paddingBlockStart="200">
+                <InlineStack align="center">
+                  <Pagination
+                    hasPrevious={clampedPage > 0}
+                    onPrevious={() => setPage(clampedPage - 1)}
+                    hasNext={clampedPage < pageCount - 1}
+                    onNext={() => setPage(clampedPage + 1)}
+                    label={`Page ${clampedPage + 1} of ${pageCount}`}
+                  />
+                </InlineStack>
+              </Box>
+            )}
+          </BlockStack>
+        )
       }
     </BlockStack>
   );

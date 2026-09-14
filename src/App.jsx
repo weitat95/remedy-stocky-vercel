@@ -180,6 +180,13 @@ export default function App() {
             selected: is('/reports/best-sellers'),
           },
           {
+            label: 'Foot Traffic',
+            icon: PersonIcon,
+            url: '/reports/foot-traffic',
+            onClick: () => navigate('/reports/foot-traffic'),
+            selected: is('/reports/foot-traffic'),
+          },
+          {
             label: 'Low Stock',
             icon: InventoryIcon,
             url: '/reports/low-stock',
