@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import {
-  Page, Card, Tabs, DataTable, Text, Badge, Spinner, Button,
+  Page, Card, Tabs, DataTable, Text, Badge, Spinner, Button, Checkbox,
   Banner, EmptyState, InlineStack, BlockStack, Select, TextField, Tooltip, Icon, Pagination, Box,
 } from '@shopify/polaris';
 import { QuestionCircleIcon } from '@shopify/polaris-icons';
@@ -131,8 +131,16 @@ function POHistoryReport() {
 
 // index into a foot-traffic row — order matches the DataTable headings/columns
 const FOOT_TRAFFIC_SORT_FIELDS = [
-  'date', 'locationName', 'peopleIn', 'peopleOut', 'net', 'visitors', 'netSales', 'orderCount', 'conversionRate',
+  'date', 'dayName', 'locationName', 'peopleIn', 'peopleOut', 'net', 'visitors', 'netSales', 'orderCount', 'conversionRate',
 ];
+
+const WEEKDAY_FORMATTER = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' });
+// r.date is a YYYY-MM-DD store-local calendar date (see storeLocalDate in the backend) —
+// parsed as UTC midnight and formatted back out in UTC so the weekday matches that
+// calendar date regardless of the viewer's browser timezone.
+function weekdayName(dateStr) {
+  return WEEKDAY_FORMATTER.format(new Date(`${dateStr}T00:00:00Z`));
+}
 
 function compareFootTrafficRows(a, b, field) {
   const av = a[field];
@@ -151,6 +159,9 @@ function FootTrafficReport() {
   const [page, setPage] = useState(0);
   const [sortIndex, setSortIndex] = useState(0); // Date
   const [sortDirection, setSortDirection] = useState('descending');
+  const [salesHighlight, setSalesHighlight] = useState('');
+  const [conversionHighlight, setConversionHighlight] = useState('');
+  const [showEmptyDays, setShowEmptyDays] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['reports', 'location-daily-sales', from, to],
@@ -158,12 +169,17 @@ function FootTrafficReport() {
   });
   const { data: locationsData } = useQuery({ queryKey: ['locations'], queryFn: getLocations });
 
-  const allRows = data?.data || [];
+  const allRows = (data?.data || []).map((r) => ({ ...r, dayName: weekdayName(r.date) }));
   const locationOptions = [
     { label: 'All locations', value: 'all' },
     ...(locationsData?.data || []).map((l) => ({ label: l.name, value: l.id })),
   ];
-  const filteredRows = locationId === 'all' ? allRows : allRows.filter((r) => r.locationId === locationId);
+  const locationFilteredRows = locationId === 'all' ? allRows : allRows.filter((r) => r.locationId === locationId);
+  // "Empty" = the backend zero-filled this date/location (see GET /reports/location-daily-sales)
+  // because there were no orders and no foot traffic that day — hidden by default so a quiet
+  // range doesn't drown out days that actually had activity.
+  const isEmptyRow = (r) => r.orderCount === 0 && (r.peopleIn ?? 0) === 0 && (r.peopleOut ?? 0) === 0;
+  const filteredRows = showEmptyDays ? locationFilteredRows : locationFilteredRows.filter((r) => !isEmptyRow(r));
 
   const sortedRows = [...filteredRows].sort((a, b) => {
     const dir = sortDirection === 'descending' ? -1 : 1;
@@ -177,8 +193,10 @@ function FootTrafficReport() {
     clampedPage * FOOT_TRAFFIC_PAGE_SIZE + FOOT_TRAFFIC_PAGE_SIZE
   );
 
-  const toRow = (r) => [
+  // Plain-text row — used for CSV export and as the base for the on-screen row.
+  const toCsvRow = (r) => [
     r.date,
+    r.dayName,
     r.locationName || '—',
     r.peopleIn ?? '—',
     r.peopleOut ?? '—',
@@ -188,8 +206,27 @@ function FootTrafficReport() {
     r.orderCount,
     r.conversionRate != null ? `${(r.conversionRate * 100).toFixed(1)}%` : '—',
   ];
-  const rows = pagedRows.map(toRow);
-  const headings = ['Date', 'Location', 'People In', 'People Out', 'Net', 'Visitors', 'Net Sales', 'Orders', 'Conversion Rate'];
+  const headings = ['Date', 'Day', 'Location', 'People In', 'People Out', 'Net', 'Visitors', 'Net Sales', 'Orders', 'Conversion Rate'];
+
+  const salesThreshold = salesHighlight !== '' ? Number(salesHighlight) : null;
+  const conversionThreshold = conversionHighlight !== '' ? Number(conversionHighlight) : null;
+
+  // On-screen row — same cells as toCsvRow, but Net Sales / Conversion Rate
+  // swap in a success Badge when they clear the user-set highlight threshold.
+  const toDisplayRow = (r) => {
+    const cells = toCsvRow(r);
+    if (salesThreshold != null && Number.isFinite(salesThreshold) && Number(r.netSales) >= salesThreshold) {
+      cells[7] = <Badge tone="success">{cells[7]}</Badge>;
+    }
+    if (
+      conversionThreshold != null && Number.isFinite(conversionThreshold) &&
+      r.conversionRate != null && r.conversionRate * 100 >= conversionThreshold
+    ) {
+      cells[9] = <Badge tone="success">{cells[9]}</Badge>;
+    }
+    return cells;
+  };
+  const rows = pagedRows.map(toDisplayRow);
 
   const visitorsHeading = (
     <Tooltip content="min(People In, People Out) per device — a miscount in one direction shouldn't skew the count">
@@ -220,7 +257,7 @@ function FootTrafficReport() {
     const locationLabel = locationOptions.find((o) => o.value === locationId)?.label || 'all';
     downloadCSVFile(
       `foot-traffic_${from}_to_${to}_${locationLabel.toLowerCase().replace(/\s+/g, '-')}.csv`,
-      [headings, ...sortedRows.map(toRow)]
+      [headings, ...sortedRows.map(toCsvRow)]
     );
   }, [sortedRows, from, to, locationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -228,11 +265,45 @@ function FootTrafficReport() {
     <BlockStack gap="400">
       <InlineStack align="space-between" blockAlign="center">
         <Text variant="headingMd">Foot Traffic</Text>
-        <InlineStack gap="200">
-          <TextField label="From" labelInline type="date" value={from} onChange={(v) => { setFrom(v); setPage(0); }} autoComplete="off" />
-          <TextField label="To" labelInline type="date" value={to} onChange={(v) => { setTo(v); setPage(0); }} autoComplete="off" />
+        <InlineStack gap="200" blockAlign="center">
+          <InlineStack gap="100" blockAlign="center" wrap={false}>
+            <Text as="span" tone="subdued">From</Text>
+            <TextField labelHidden label="From" type="date" value={from} onChange={(v) => { setFrom(v); setPage(0); }} autoComplete="off" />
+          </InlineStack>
+          <InlineStack gap="100" blockAlign="center" wrap={false}>
+            <Text as="span" tone="subdued">To</Text>
+            <TextField labelHidden label="To" type="date" value={to} onChange={(v) => { setTo(v); setPage(0); }} autoComplete="off" />
+          </InlineStack>
           <Select label="Location" labelInline options={locationOptions} value={locationId} onChange={(v) => { setLocationId(v); setPage(0); }} />
+          <Checkbox
+            label="Show empty days (0 in/out)"
+            checked={showEmptyDays}
+            onChange={(checked) => { setShowEmptyDays(checked); setPage(0); }}
+          />
           <Button onClick={handleExport} disabled={filteredRows.length === 0}>Export CSV</Button>
+        </InlineStack>
+      </InlineStack>
+      <InlineStack align="end" blockAlign="center">
+        <InlineStack gap="200" blockAlign="center">
+          <Text as="span" tone="subdued">Highlight</Text>
+          <InlineStack gap="100" blockAlign="center" wrap={false}>
+            <Text as="span" tone="subdued">Net Sales ≥ RM</Text>
+            <TextField
+              labelHidden label="Highlight Net Sales above"
+              type="number" value={salesHighlight}
+              onChange={(v) => setSalesHighlight(v)}
+              autoComplete="off" placeholder="e.g. 500"
+            />
+          </InlineStack>
+          <InlineStack gap="100" blockAlign="center" wrap={false}>
+            <Text as="span" tone="subdued">Conversion Rate ≥</Text>
+            <TextField
+              labelHidden label="Highlight conversion rate above"
+              type="number" value={conversionHighlight}
+              onChange={(v) => setConversionHighlight(v)}
+              autoComplete="off" placeholder="e.g. 10" suffix="%"
+            />
+          </InlineStack>
         </InlineStack>
       </InlineStack>
       {error && <Banner tone="critical">{error.message}</Banner>}
@@ -241,10 +312,10 @@ function FootTrafficReport() {
         : (
           <BlockStack gap="200">
             <DataTable
-              columnContentTypes={['text', 'text', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric']}
-              headings={['Date', 'Location', 'People In', 'People Out', 'Net', visitorsHeading, 'Net Sales', 'Orders', conversionRateHeading]}
+              columnContentTypes={['text', 'text', 'text', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric']}
+              headings={['Date', 'Day', 'Location', 'People In', 'People Out', 'Net', visitorsHeading, 'Net Sales', 'Orders', conversionRateHeading]}
               rows={rows}
-              sortable={[true, true, true, true, true, true, true, true, true]}
+              sortable={[true, true, true, true, true, true, true, true, true, true]}
               defaultSortDirection="descending"
               initialSortColumnIndex={sortIndex}
               onSort={handleSort}
