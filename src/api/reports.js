@@ -19,3 +19,8 @@ export async function getStockOnHand() {
   const res = await apiClient.get('/reports/stock-on-hand');
   return res.data;
 }
+
+export async function getLocationDailySales(params = {}) {
+  const res = await apiClient.get('/reports/location-daily-sales', { params });
+  return res.data;
+}

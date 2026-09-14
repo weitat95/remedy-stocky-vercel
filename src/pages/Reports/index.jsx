@@ -5,7 +5,13 @@ import {
 } from '@shopify/polaris';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useLocation, Routes, Route } from 'react-router-dom';
-import { getSlowMoving, getReorderReport, getPOHistory, getStockOnHand } from '../../api/reports.js';
+import { getSlowMoving, getReorderReport, getPOHistory, getStockOnHand, getLocationDailySales } from '../../api/reports.js';
+
+function isoDaysAgo(days) {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
+}
 
 function SlowMovingReport() {
   const [days, setDays] = useState('90');
@@ -118,6 +124,45 @@ function POHistoryReport() {
   );
 }
 
+function FootTrafficReport() {
+  const [from, setFrom] = useState(() => isoDaysAgo(30));
+  const [to, setTo] = useState(() => isoDaysAgo(0));
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['reports', 'location-daily-sales', from, to],
+    queryFn: () => getLocationDailySales({ from, to }),
+  });
+  const rows = (data?.data || []).map((r) => [
+    r.date,
+    r.locationName || '—',
+    r.peopleIn ?? '—',
+    r.peopleOut ?? '—',
+    r.net ?? '—',
+    `$${Number(r.netSales).toFixed(2)}`,
+    r.orderCount,
+    r.conversionRate != null ? `${(r.conversionRate * 100).toFixed(1)}%` : '—',
+  ]);
+  return (
+    <BlockStack gap="400">
+      <InlineStack align="space-between" blockAlign="center">
+        <Text variant="headingMd">Foot Traffic</Text>
+        <InlineStack gap="200">
+          <TextField label="From" labelInline type="date" value={from} onChange={setFrom} autoComplete="off" />
+          <TextField label="To" labelInline type="date" value={to} onChange={setTo} autoComplete="off" />
+        </InlineStack>
+      </InlineStack>
+      {error && <Banner tone="critical">{error.message}</Banner>}
+      {isLoading ? <Spinner /> : rows.length === 0
+        ? <EmptyState heading="No foot traffic data for this range" image="" />
+        : <DataTable
+            columnContentTypes={['text', 'text', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric']}
+            headings={['Date', 'Location', 'People In', 'People Out', 'Net', 'Net Sales', 'Orders', 'Conversion Rate']}
+            rows={rows}
+          />
+      }
+    </BlockStack>
+  );
+}
+
 function Placeholder({ title }) {
   return <EmptyState heading={`${title} coming soon`} image=""><p>This report is not yet implemented.</p></EmptyState>;
 }
@@ -127,6 +172,7 @@ const TABS = [
   { id: 'reorder', content: 'Reorder', path: 'reorder' },
   { id: 'stock-on-hand', content: 'Stock on Hand', path: 'stock-on-hand' },
   { id: 'purchase-orders', content: 'Purchase Orders', path: 'purchase-orders' },
+  { id: 'foot-traffic', content: 'Foot Traffic', path: 'foot-traffic' },
   { id: 'abc', content: 'ABC Analysis', path: 'abc' },
   { id: 'best-sellers', content: 'Best Sellers', path: 'best-sellers' },
   { id: 'orders', content: 'Orders', path: 'orders' },
@@ -150,6 +196,7 @@ export default function Reports() {
       case 'reorder': return <ReorderReport />;
       case 'stock-on-hand': return <StockOnHandReport />;
       case 'purchase-orders': return <POHistoryReport />;
+      case 'foot-traffic': return <FootTrafficReport />;
       default: return <Placeholder title={TABS[activeTab]?.content} />;
     }
   };
