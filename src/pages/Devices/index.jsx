@@ -12,6 +12,14 @@ const UNASSIGNED = '';
 // Shopify location (or the deviceId when unassigned).
 const emptyForm = { deviceId: '', apiKey: '', locationId: UNASSIGNED, isActive: true };
 
+// 24 random bytes (192 bits) as hex — plenty of entropy for a device credential,
+// generated client-side via the Web Crypto API rather than Math.random().
+function generateApiKey() {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export default function Devices() {
   const queryClient = useQueryClient();
   const { data, isLoading, error } = useQuery({ queryKey: ['devices'], queryFn: getDevices });
@@ -201,6 +209,9 @@ export default function Devices() {
               autoComplete="off"
               monospaced
               helpText="The device authenticates ingestion with this key. Changing it stops the current device from posting until it is reflashed with the new key."
+              connectedRight={
+                <Button onClick={() => setField('apiKey')(generateApiKey())}>Generate new</Button>
+              }
             />
             <Select
               label="Shopify location"
