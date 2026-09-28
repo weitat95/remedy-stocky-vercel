@@ -141,6 +141,7 @@ export default function Adjustments() {
 
   return (
     <Page
+      fullWidth
       title="Stock Adjustments"
       primaryAction={{
         content: 'New adjustment',

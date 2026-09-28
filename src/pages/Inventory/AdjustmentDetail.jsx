@@ -492,7 +492,7 @@ export default function AdjustmentDetail() {
   // ── Page loading ──────────────────────────────────────────────────────────
   if (!isNew && loadingAdj) {
     return (
-      <Page title="Adjustment">
+      <Page fullWidth title="Adjustment">
         <Box padding="800"><InlineStack align="center"><Spinner /></InlineStack></Box>
       </Page>
     );
@@ -521,6 +521,7 @@ export default function AdjustmentDetail() {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <Page
+      fullWidth
       title={title}
       subtitle={subtitle}
       backAction={{ content: 'Adjustments', url: '/inventory/adjustments' }}
