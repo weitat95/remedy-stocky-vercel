@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Page, Layout, Card, IndexTable, Text, Badge, Button, Link,
   InlineStack, BlockStack, Banner, Spinner, Divider,
-  Box, InlineGrid, TextField, Icon, Toast, Frame, Modal, Checkbox,
+  Box, InlineGrid, TextField, Icon, Toast, Modal, Checkbox,
 } from '@shopify/polaris';
 import { AttachmentIcon, DeleteIcon } from '@shopify/polaris-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -235,7 +235,7 @@ export default function PODetail() {
   ];
 
   return (
-    <Frame>
+    <>
     {toast && (
       <Toast
         content={toast.message}
@@ -540,7 +540,7 @@ export default function PODetail() {
       </Modal.Section>
     </Modal>
 
-    </Frame>
+    </>
   );
 }
 
