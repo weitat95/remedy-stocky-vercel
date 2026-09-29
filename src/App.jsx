@@ -44,21 +44,22 @@ export default function App() {
   const queryClient = useQueryClient();
   const [mobileNavActive, setMobileNavActive] = useState(false);
   const [userMenuActive, setUserMenuActive] = useState(false);
-  const logoSrc = useLogoSrc();
+  const topBarLogoSrc = useLogoSrc('white'); // TopBar background is dark
+  const faviconLogoSrc = useLogoSrc('black'); // browser tab chrome is typically light
 
   // Swap the favicon to the uploaded logo once it's confirmed to exist; otherwise
   // leave index.html's default favicon.svg link untouched.
   useEffect(() => {
-    if (!logoSrc) return;
+    if (!faviconLogoSrc) return;
     let link = document.querySelector("link[rel='icon']");
     if (!link) {
       link = document.createElement('link');
       link.rel = 'icon';
       document.head.appendChild(link);
     }
-    link.type = logoSrc.endsWith('.svg') ? 'image/svg+xml' : 'image/jpeg';
-    link.href = logoSrc;
-  }, [logoSrc]);
+    link.type = faviconLogoSrc.endsWith('.svg') ? 'image/svg+xml' : 'image/jpeg';
+    link.href = faviconLogoSrc;
+  }, [faviconLogoSrc]);
 
   // Session check — GET /auth/me returns 401 if the httpOnly cookie is missing/expired.
   const { data: session, isLoading: sessionLoading } = useQuery({
@@ -265,9 +266,9 @@ export default function App() {
 
   return (
     <Frame
-      logo={logoSrc ? {
+      logo={topBarLogoSrc ? {
         width: 104,
-        topBarSource: logoSrc,
+        topBarSource: topBarLogoSrc,
         url: '/',
         accessibilityLabel: 'Logo',
       } : undefined}

@@ -4,7 +4,7 @@ import { login } from '../api/auth.js';
 import useLogoSrc from '../hooks/useLogoSrc.js';
 
 export default function Login({ onLoginSuccess }) {
-  const logoSrc = useLogoSrc();
+  const logoSrc = useLogoSrc('black'); // Card background is light
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');

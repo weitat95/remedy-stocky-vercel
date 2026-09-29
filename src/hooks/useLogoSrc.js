@@ -6,10 +6,11 @@ import { useEffect, useState } from 'react';
 // with no extra per-store frontend env var needed.
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
 
-// SVG preferred (vector, scales cleanly, transparent by default) — falls back
-// to the raster file if only that was uploaded, then to null (each consumer's
-// own default) if neither exists.
-const LOGO_CANDIDATES = [`${API_BASE_URL}/logo.svg`, `${API_BASE_URL}/logo.jpeg`];
+function candidatesFor(variant) {
+  // SVG preferred (vector, scales cleanly, transparent by default) — falls
+  // back to a raster file if only that was uploaded for this variant.
+  return [`${API_BASE_URL}/logo_${variant}.svg`, `${API_BASE_URL}/logo_${variant}.jpeg`];
+}
 
 function tryLoad(src) {
   return new Promise((resolve) => {
@@ -20,13 +21,17 @@ function tryLoad(src) {
   });
 }
 
-export default function useLogoSrc() {
+// variant: 'white' (for dark backgrounds, e.g. the TopBar) or 'black' (for
+// light backgrounds, e.g. the login page / favicon). Resolves to null — each
+// consumer's own default — if that variant hasn't been uploaded.
+export default function useLogoSrc(variant) {
   const [logoSrc, setLogoSrc] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
+    setLogoSrc(null);
     (async () => {
-      for (const candidate of LOGO_CANDIDATES) {
+      for (const candidate of candidatesFor(variant)) {
         const resolved = await tryLoad(candidate);
         if (cancelled) return;
         if (resolved) {
@@ -37,7 +42,7 @@ export default function useLogoSrc() {
       if (!cancelled) setLogoSrc(null);
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [variant]);
 
   return logoSrc;
 }
