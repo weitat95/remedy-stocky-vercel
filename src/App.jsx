@@ -56,7 +56,7 @@ export default function App() {
       link.rel = 'icon';
       document.head.appendChild(link);
     }
-    link.type = 'image/jpeg';
+    link.type = logoSrc.endsWith('.svg') ? 'image/svg+xml' : 'image/jpeg';
     link.href = logoSrc;
   }, [logoSrc]);
 

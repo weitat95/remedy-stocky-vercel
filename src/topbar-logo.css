@@ -1,0 +1,20 @@
+/*
+ * Polaris's Frame `logo` prop renders the raw image with only `width`
+ * constrained (inline style) — no `height` or `object-fit`, and the
+ * container doesn't clip overflow. A source logo that isn't a wide,
+ * tightly-cropped banner (e.g. one with padding/background around a
+ * stacked icon+wordmark) ends up taller than the top bar and bleeds
+ * into the page below it. Polaris exposes no prop for this, so this
+ * pins the image to the bar's own height and scales it down to fit.
+ * `!important` is required to beat the inline `style={{ width }}` Polaris sets.
+ */
+.Polaris-TopBar__LogoContainer {
+  overflow: hidden;
+}
+
+.Polaris-TopBar__Logo {
+  width: auto !important;
+  height: 32px !important;
+  max-width: 140px;
+  object-fit: contain;
+}
