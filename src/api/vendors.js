@@ -10,6 +10,11 @@ export async function syncVendors() {
   return res.data.data;
 }
 
+export async function getVendorSyncStatus() {
+  const res = await apiClient.get('/vendors/sync-status');
+  return res.data.data;
+}
+
 export async function getVendor(id) {
   const res = await apiClient.get(`/vendors/${id}`);
   return res.data.data;

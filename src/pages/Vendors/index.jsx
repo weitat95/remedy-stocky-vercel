@@ -5,7 +5,12 @@ import {
   Modal, FormLayout, TextField, Banner, Spinner, BlockStack, Toast,
 } from '@shopify/polaris';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getVendors, syncVendors, hideVendor, convertToSupplier, updateVendor } from '../../api/vendors.js';
+import { getVendors, syncVendors, getVendorSyncStatus, hideVendor, convertToSupplier, updateVendor } from '../../api/vendors.js';
+
+function formatSyncedAt(iso) {
+  if (!iso) return 'Never';
+  return new Date(iso).toLocaleString('en-MY', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
 
 export default function Vendors() {
   const navigate = useNavigate();
@@ -19,10 +24,16 @@ export default function Vendors() {
     queryFn: () => getVendors(),
   });
 
+  const { data: syncStatus } = useQuery({
+    queryKey: ['vendors-sync-status'],
+    queryFn: getVendorSyncStatus,
+  });
+
   const syncMutation = useMutation({
     mutationFn: syncVendors,
     onSuccess: ({ syncedCount }) => {
       queryClient.invalidateQueries({ queryKey: ['vendors'] });
+      queryClient.invalidateQueries({ queryKey: ['vendors-sync-status'] });
       setToast({ message: `Synced ${syncedCount} vendor${syncedCount === 1 ? '' : 's'} from Shopify` });
     },
     onError: (err) => setToast({ message: err.message || 'Sync failed', error: true }),
@@ -71,6 +82,7 @@ export default function Vendors() {
   return (
     <Page
       title="Vendors"
+      subtitle={`Last synced: ${formatSyncedAt(syncStatus?.lastSyncedAt)}`}
       primaryAction={{
         content: 'Sync now',
         onAction: () => syncMutation.mutate(),
