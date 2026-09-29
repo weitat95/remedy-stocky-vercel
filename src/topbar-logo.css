@@ -14,7 +14,7 @@
 
 .Polaris-TopBar__Logo {
   width: auto !important;
-  height: 32px !important;
-  max-width: 140px;
+  height: 52px !important; /* bar itself is 3.5rem (56px) tall; container clips overflow as a safety net */
+  max-width: 200px;
   object-fit: contain;
 }
