@@ -19,6 +19,7 @@ import {
 } from '@shopify/polaris-icons';
 
 import { getMe, logout as logoutApi } from './api/auth.js';
+import useLogoSrc from './hooks/useLogoSrc.js';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard/index.jsx';
 import Vendors from './pages/Vendors/index.jsx';
@@ -43,6 +44,21 @@ export default function App() {
   const queryClient = useQueryClient();
   const [mobileNavActive, setMobileNavActive] = useState(false);
   const [userMenuActive, setUserMenuActive] = useState(false);
+  const logoSrc = useLogoSrc();
+
+  // Swap the favicon to the uploaded logo once it's confirmed to exist; otherwise
+  // leave index.html's default favicon.svg link untouched.
+  useEffect(() => {
+    if (!logoSrc) return;
+    let link = document.querySelector("link[rel='icon']");
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+    link.type = 'image/jpeg';
+    link.href = logoSrc;
+  }, [logoSrc]);
 
   // Session check — GET /auth/me returns 401 if the httpOnly cookie is missing/expired.
   const { data: session, isLoading: sessionLoading } = useQuery({
@@ -249,6 +265,12 @@ export default function App() {
 
   return (
     <Frame
+      logo={logoSrc ? {
+        width: 104,
+        topBarSource: logoSrc,
+        url: '/',
+        accessibilityLabel: 'Logo',
+      } : undefined}
       topBar={topBarMarkup}
       navigation={navigationMarkup}
       showMobileNavigation={mobileNavActive}

@@ -1,8 +1,10 @@
 import React, { useState, useCallback } from 'react';
 import { Box, Card, FormLayout, TextField, Button, Text, Banner, BlockStack } from '@shopify/polaris';
 import { login } from '../api/auth.js';
+import useLogoSrc from '../hooks/useLogoSrc.js';
 
 export default function Login({ onLoginSuccess }) {
+  const logoSrc = useLogoSrc();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -32,7 +34,13 @@ export default function Login({ onLoginSuccess }) {
         <Card>
           <form onSubmit={handleSubmit}>
             <BlockStack gap="400">
-              <Text variant="headingLg" as="h1">Stocky</Text>
+              {logoSrc ? (
+                <div style={{ display: 'flex', justifyContent: 'center' }}>
+                  <img src={logoSrc} alt="Logo" style={{ maxHeight: 56, maxWidth: '100%' }} />
+                </div>
+              ) : (
+                <Text variant="headingLg" as="h1">Stocky</Text>
+              )}
               {error && <Banner tone="critical">{error}</Banner>}
               <FormLayout>
                 <TextField
