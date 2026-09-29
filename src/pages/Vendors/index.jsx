@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Page, Card, ResourceList, ResourceItem, Text, Badge,
-  Modal, FormLayout, TextField, Banner, Spinner, BlockStack, Frame, Toast,
+  Modal, FormLayout, TextField, Banner, Spinner, BlockStack, Toast,
 } from '@shopify/polaris';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getVendors, syncVendors, hideVendor, convertToSupplier, updateVendor } from '../../api/vendors.js';
@@ -69,7 +69,6 @@ export default function Vendors() {
   }, [editVendor, editForm, updateMutation]);
 
   return (
-    <Frame>
     <Page
       title="Vendors"
       primaryAction={{
@@ -173,6 +172,5 @@ export default function Vendors() {
         <Toast content={toast.message} error={toast.error} onDismiss={() => setToast(null)} />
       )}
     </Page>
-    </Frame>
   );
 }

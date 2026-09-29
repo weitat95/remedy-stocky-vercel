@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   Page, Card, IndexTable, Text, Badge, Button, Banner, Spinner,
-  Modal, TextField, Select, Checkbox, Frame, Toast, BlockStack,
+  Modal, TextField, Select, Checkbox, Toast, BlockStack,
 } from '@shopify/polaris';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getDevices, createDevice, updateDevice, deleteDevice } from '../../api/devices.js';
@@ -126,7 +126,7 @@ export default function Devices() {
   ));
 
   return (
-    <Frame>
+    <>
       {toast && (
         <Toast content={toast.message} error={toast.error} onDismiss={() => setToast(null)} />
       )}
@@ -229,6 +229,6 @@ export default function Devices() {
           </BlockStack>
         </Modal.Section>
       </Modal>
-    </Frame>
+    </>
   );
 }
