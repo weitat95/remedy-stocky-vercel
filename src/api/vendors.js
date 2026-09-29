@@ -5,6 +5,11 @@ export async function getVendors(params = {}) {
   return res.data.data;
 }
 
+export async function syncVendors() {
+  const res = await apiClient.post('/vendors/sync');
+  return res.data.data;
+}
+
 export async function getVendor(id) {
   const res = await apiClient.get(`/vendors/${id}`);
   return res.data.data;

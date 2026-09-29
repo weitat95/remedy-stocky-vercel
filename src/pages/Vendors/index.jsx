@@ -2,20 +2,30 @@ import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Page, Card, ResourceList, ResourceItem, Text, Badge,
-  Modal, FormLayout, TextField, Banner, Spinner, BlockStack,
+  Modal, FormLayout, TextField, Banner, Spinner, BlockStack, Frame, Toast,
 } from '@shopify/polaris';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getVendors, hideVendor, convertToSupplier, updateVendor } from '../../api/vendors.js';
+import { getVendors, syncVendors, hideVendor, convertToSupplier, updateVendor } from '../../api/vendors.js';
 
 export default function Vendors() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [editVendor, setEditVendor] = useState(null);
   const [editForm, setEditForm] = useState({ leadDays: '', restockDays: '', orderMinQty: '', orderMaxQty: '' });
+  const [toast, setToast] = useState(null);
 
   const { data: vendors = [], isLoading, error } = useQuery({
     queryKey: ['vendors'],
     queryFn: () => getVendors(),
+  });
+
+  const syncMutation = useMutation({
+    mutationFn: syncVendors,
+    onSuccess: ({ syncedCount }) => {
+      queryClient.invalidateQueries({ queryKey: ['vendors'] });
+      setToast({ message: `Synced ${syncedCount} vendor${syncedCount === 1 ? '' : 's'} from Shopify` });
+    },
+    onError: (err) => setToast({ message: err.message || 'Sync failed', error: true }),
   });
 
   const hideMutation = useMutation({
@@ -59,7 +69,15 @@ export default function Vendors() {
   }, [editVendor, editForm, updateMutation]);
 
   return (
-    <Page title="Vendors">
+    <Frame>
+    <Page
+      title="Vendors"
+      primaryAction={{
+        content: 'Sync now',
+        onAction: () => syncMutation.mutate(),
+        loading: syncMutation.isPending,
+      }}
+    >
       {error && <Banner tone="critical">{error.message}</Banner>}
       <Card>
         {isLoading ? (
@@ -150,6 +168,11 @@ export default function Vendors() {
           </FormLayout>
         </Modal.Section>
       </Modal>
+
+      {toast && (
+        <Toast content={toast.message} error={toast.error} onDismiss={() => setToast(null)} />
+      )}
     </Page>
+    </Frame>
   );
 }
