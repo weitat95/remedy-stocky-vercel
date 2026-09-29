@@ -36,7 +36,7 @@ export default function Login({ onLoginSuccess }) {
             <BlockStack gap="400">
               {logoSrc ? (
                 <div style={{ display: 'flex', justifyContent: 'center' }}>
-                  <img src={logoSrc} alt="Logo" style={{ maxHeight: 56, maxWidth: '100%' }} />
+                  <img src={logoSrc} alt="Logo" style={{ maxHeight: 120, maxWidth: '100%' }} />
                 </div>
               ) : (
                 <Text variant="headingLg" as="h1">Stocky</Text>
