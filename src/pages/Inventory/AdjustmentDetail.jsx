@@ -81,6 +81,7 @@ export default function AdjustmentDetail() {
   });
 
   const isArchived = existing?.status === 'archived';
+  const isApplying = existing?.status === 'applying';
 
   // ── Locations ─────────────────────────────────────────────────────────────
   const { data: locationsRaw } = useQuery({
@@ -527,7 +528,9 @@ export default function AdjustmentDetail() {
       backAction={{ content: 'Adjustments', url: '/inventory/adjustments' }}
       titleMetadata={isArchived
         ? <Badge tone="success">Applied</Badge>
-        : <Badge>Open</Badge>}
+        : isApplying
+          ? <Badge tone="critical">Stuck (applying)</Badge>
+          : <Badge>Open</Badge>}
       primaryAction={isArchived ? (editingMeta ? {
         content: 'Save changes',
         onAction: handleEditSave,
@@ -540,7 +543,7 @@ export default function AdjustmentDetail() {
         content: 'Save',
         onAction: handleSave,
         loading: saveMutation.isPending || createMutation.isPending,
-        disabled: lineItems.length === 0 || !locationId,
+        disabled: isApplying || lineItems.length === 0 || !locationId,
       }}
       secondaryActions={[
         ...(isArchived ? [
@@ -576,6 +579,17 @@ export default function AdjustmentDetail() {
       ]}
     >
       <Layout>
+        {isApplying && (
+          <Layout.Section>
+            <Banner tone="critical">
+              This adjustment is stuck mid-save — a previous attempt failed after Shopify
+              inventory may have already been updated, so it was deliberately left in this
+              state instead of being auto-reverted (which risks double-applying the change).
+              Check Shopify's inventory history for this item before retrying; this record
+              needs manual DB review to resolve (see CLAUDE.md, "Stock Adjustment save").
+            </Banner>
+          </Layout.Section>
+        )}
         {saveError && (
           <Layout.Section>
             <Banner tone="critical" onDismiss={() => setSaveError(null)}>{saveError}</Banner>

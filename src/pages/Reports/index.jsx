@@ -1,12 +1,17 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   Page, Card, Tabs, DataTable, Text, Badge, Spinner, Button, Checkbox,
   Banner, EmptyState, InlineStack, BlockStack, Select, TextField, Tooltip, Icon, Pagination, Box, InlineGrid, Toast,
+  Modal,
 } from '@shopify/polaris';
 import { QuestionCircleIcon } from '@shopify/polaris-icons';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useLocation, Routes, Route } from 'react-router-dom';
-import { getSlowMoving, getReorderReport, getPOHistory, getStockOnHand, getLocationDailySales } from '../../api/reports.js';
+import {
+  getSlowMoving, getReorderReport, getPOHistory, getStockOnHand, getLocationDailySales,
+  getReplenishmentReports, getReplenishmentReport, runReplenishmentReport,
+  getReplenishmentSettings, updateReplenishmentSettings,
+} from '../../api/reports.js';
 import { getLocations } from '../../api/inventory.js';
 import { downloadCSVFile } from '../../utils/csv.js';
 
@@ -515,6 +520,324 @@ function FootTrafficReport() {
   );
 }
 
+// index into a replenishment line item — order matches the DataTable headings/columns
+const REPL_SORT_FIELDS = [
+  'vendor', 'sku', 'productTitle', 'variantTitle', 'maxStock', 'soldQty', 'sourceQty', 'destQty', 'replQty',
+];
+const REPL_PAGE_SIZE = 50;
+
+// Filesystem/URL-safe stamp for filenames — e.g. "2026-09-29_0300".
+function compactTimestamp(iso) {
+  const d = new Date(iso);
+  return `${d.toISOString().slice(0, 10)}_${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function replQtyCell(replQty) {
+  if (replQty == null) return '—';
+  if (replQty > 0) return <Badge tone="attention">{String(replQty)}</Badge>;
+  if (replQty < 0) return <Badge tone="critical">{String(replQty)}</Badge>;
+  return '0';
+}
+
+function ReplenishmentReport() {
+  const queryClient = useQueryClient();
+  const [from, setFrom] = useState(() => isoDaysAgo(7));
+  const [to, setTo] = useState(() => isoDaysAgo(0));
+  const [sourceLocationId, setSourceLocationId] = useState('');
+  const [destLocationId, setDestLocationId] = useState('');
+  const [seededFromSettings, setSeededFromSettings] = useState(false);
+  const [activeReportId, setActiveReportId] = useState(null);
+  const [seededFromHistory, setSeededFromHistory] = useState(false);
+  const [onlyNeeding, setOnlyNeeding] = useState(false);
+  const [page, setPage] = useState(0);
+  const [sortIndex, setSortIndex] = useState(8); // REPL QTY
+  const [sortDirection, setSortDirection] = useState('descending');
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [scheduleForm, setScheduleForm] = useState(null);
+  const [toast, setToast] = useState(null);
+
+  const { data: locationsData } = useQuery({ queryKey: ['locations'], queryFn: getLocations });
+  const { data: settingsData } = useQuery({
+    queryKey: ['reports', 'replenishment-settings'],
+    queryFn: getReplenishmentSettings,
+  });
+  const { data: historyData } = useQuery({
+    queryKey: ['reports', 'replenishment-history'],
+    queryFn: () => getReplenishmentReports({ limit: 30 }),
+  });
+  const { data: detailData, isLoading: detailLoading, error: detailError } = useQuery({
+    queryKey: ['reports', 'replenishment-detail', activeReportId],
+    queryFn: () => getReplenishmentReport(activeReportId),
+    enabled: !!activeReportId,
+  });
+
+  const locations = locationsData?.data || [];
+  const locationOptions = locations.map((l) => ({ label: l.name, value: l.id }));
+  const locationsById = Object.fromEntries(locations.map((l) => [l.id, l.name]));
+  const history = historyData?.data || [];
+
+  // Seed the From/To location pickers from the saved schedule once, so a manual
+  // run doesn't start from blank every time the settings already say which
+  // locations this store uses. Only runs once — doesn't fight the user's own pick.
+  useEffect(() => {
+    if (seededFromSettings || !settingsData?.data) return;
+    const s = settingsData.data;
+    if (!s.sourceLocationId && !s.destLocationId) return;
+    setSourceLocationId((cur) => cur || s.sourceLocationId || '');
+    setDestLocationId((cur) => cur || s.destLocationId || '');
+    setSeededFromSettings(true);
+  }, [seededFromSettings, settingsData]);
+
+  // Land on the most recently generated report on first load, if any exist.
+  useEffect(() => {
+    if (seededFromHistory || !history.length) return;
+    setActiveReportId(history[0].id);
+    setSeededFromHistory(true);
+  }, [seededFromHistory, history]);
+
+  const runMutation = useMutation({
+    mutationFn: runReplenishmentReport,
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['reports', 'replenishment-history'] });
+      setActiveReportId(result.data.id);
+      setPage(0);
+      setToast({ message: 'Replenishment report generated' });
+    },
+  });
+
+  const settingsMutation = useMutation({
+    mutationFn: updateReplenishmentSettings,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reports', 'replenishment-settings'] });
+      setScheduleModalOpen(false);
+      setToast({ message: 'Schedule saved' });
+    },
+  });
+
+  const openScheduleModal = useCallback(() => {
+    const s = settingsData?.data || { enabled: false, periodDays: 7, sourceLocationId: '', destLocationId: '' };
+    setScheduleForm({
+      enabled: !!s.enabled,
+      periodDays: String(s.periodDays ?? 7),
+      sourceLocationId: s.sourceLocationId || '',
+      destLocationId: s.destLocationId || '',
+    });
+    setScheduleModalOpen(true);
+  }, [settingsData]);
+
+  const handleRun = useCallback(() => {
+    runMutation.mutate({ from, to, sourceLocationId, destLocationId });
+  }, [runMutation, from, to, sourceLocationId, destLocationId]);
+
+  const handleSaveSchedule = useCallback(() => {
+    settingsMutation.mutate(scheduleForm);
+  }, [settingsMutation, scheduleForm]);
+
+  const report = detailData?.data || null;
+  const allLineItems = report?.lineItems || [];
+  const filteredLineItems = onlyNeeding ? allLineItems.filter((li) => li.replQty > 0) : allLineItems;
+  const sortedLineItems = [...filteredLineItems].sort((a, b) => {
+    const dir = sortDirection === 'descending' ? -1 : 1;
+    return compareFootTrafficRows(a, b, REPL_SORT_FIELDS[sortIndex]) * dir;
+  });
+  const pageCount = Math.max(1, Math.ceil(sortedLineItems.length / REPL_PAGE_SIZE));
+  const clampedPage = Math.min(page, pageCount - 1);
+  const pagedLineItems = sortedLineItems.slice(clampedPage * REPL_PAGE_SIZE, clampedPage * REPL_PAGE_SIZE + REPL_PAGE_SIZE);
+
+  const toCsvRow = (li) => [
+    li.vendor || '—', li.sku || '—', li.productTitle || '—', li.variantTitle || '—',
+    li.maxStock ?? '—', li.soldQty, li.sourceQty ?? '—', li.destQty ?? '—', li.replQty ?? '—',
+  ];
+  const headings = ['Vendor', 'SKU', 'Product', 'Variant', 'Max Qty', 'Sold Qty', 'Source Qty', 'Dest Qty', 'REPL QTY'];
+  const rows = pagedLineItems.map((li) => {
+    const cells = toCsvRow(li);
+    cells[8] = replQtyCell(li.replQty);
+    return cells;
+  });
+
+  const handleSort = useCallback((index, direction) => {
+    setSortIndex(index);
+    setSortDirection(direction);
+    setPage(0);
+  }, []);
+
+  const handleExportCsv = useCallback(() => {
+    if (!report) return;
+    const stamp = compactTimestamp(report.generatedAt);
+    downloadCSVFile(
+      `replenishment_${report.fromDate.slice(0, 10)}_to_${report.toDate.slice(0, 10)}_generated-${stamp}.csv`,
+      [
+        ['Generated at', new Date(report.generatedAt).toLocaleString()],
+        ['Source location', locationsById[report.sourceLocationId] || report.sourceLocationId],
+        ['Destination location', locationsById[report.destLocationId] || report.destLocationId],
+        [],
+        headings,
+        ...sortedLineItems.map(toCsvRow),
+      ]
+    );
+  }, [report, sortedLineItems, locationsById]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleExportTransferCsv = useCallback(() => {
+    if (!report) return;
+    const stamp = compactTimestamp(report.generatedAt);
+    const transferRows = sortedLineItems.filter((li) => li.replQty > 0 && li.sku);
+    downloadCSVFile(
+      `replenishment-transfer_${report.fromDate.slice(0, 10)}_to_${report.toDate.slice(0, 10)}_generated-${stamp}.csv`,
+      [['sku', 'quantity'], ...transferRows.map((li) => [li.sku, li.replQty])]
+    );
+  }, [report, sortedLineItems]);
+
+  const historyOptions = history.map((h) => ({
+    label: `${h.fromDate.slice(0, 10)} → ${h.toDate.slice(0, 10)} · generated ${new Date(h.generatedAt).toLocaleString()} (${h.triggeredBy})`,
+    value: h.id,
+  }));
+
+  const canRun = from && to && sourceLocationId && destLocationId && !runMutation.isPending;
+
+  return (
+    <BlockStack gap="400">
+      <InlineStack align="space-between" blockAlign="center" wrap>
+        <Text variant="headingMd">Replenishment</Text>
+        <InlineStack gap="200" blockAlign="center" wrap>
+          <InlineStack gap="100" blockAlign="center" wrap={false}>
+            <Text as="span" tone="subdued">From</Text>
+            <TextField labelHidden label="From" type="date" value={from} onChange={setFrom} autoComplete="off" />
+          </InlineStack>
+          <InlineStack gap="100" blockAlign="center" wrap={false}>
+            <Text as="span" tone="subdued">To</Text>
+            <TextField labelHidden label="To" type="date" value={to} onChange={setTo} autoComplete="off" />
+          </InlineStack>
+          <Select
+            label="Source" labelInline placeholder="Pull from…"
+            options={locationOptions} value={sourceLocationId} onChange={setSourceLocationId}
+          />
+          <Select
+            label="Destination" labelInline placeholder="Top up…"
+            options={locationOptions} value={destLocationId} onChange={setDestLocationId}
+          />
+          <Button onClick={handleRun} disabled={!canRun} loading={runMutation.isPending} variant="primary">
+            Run report
+          </Button>
+          <Button onClick={openScheduleModal}>Schedule…</Button>
+        </InlineStack>
+      </InlineStack>
+
+      {runMutation.error && <Banner tone="critical">{runMutation.error.message}</Banner>}
+
+      {historyOptions.length > 0 && (
+        <Select
+          label="View report" labelInline
+          options={historyOptions}
+          value={activeReportId || ''}
+          onChange={(v) => { setActiveReportId(v); setPage(0); }}
+        />
+      )}
+
+      {detailError && <Banner tone="critical">{detailError.message}</Banner>}
+
+      {!activeReportId ? (
+        <EmptyState heading="No replenishment report yet" image="">
+          <p>Pick a date range and locations, then click "Run report".</p>
+        </EmptyState>
+      ) : detailLoading ? (
+        <Spinner />
+      ) : report && (
+        <BlockStack gap="300">
+          <InlineStack align="space-between" blockAlign="center" wrap>
+            <BlockStack gap="050">
+              <Text as="span" tone="subdued">
+                Sales {report.fromDate.slice(0, 10)} – {report.toDate.slice(0, 10)} · Generated {new Date(report.generatedAt).toLocaleString()}
+                {report.triggeredBy === 'cron' ? ' (scheduled)' : ' (manual)'}
+              </Text>
+              <Text as="span" tone="subdued">
+                {locationsById[report.sourceLocationId] || report.sourceLocationId} → {locationsById[report.destLocationId] || report.destLocationId}
+              </Text>
+            </BlockStack>
+            <InlineStack gap="200" blockAlign="center">
+              <Checkbox
+                label="Only rows needing replenishment"
+                checked={onlyNeeding}
+                onChange={(checked) => { setOnlyNeeding(checked); setPage(0); }}
+              />
+              <Button onClick={handleExportCsv} disabled={allLineItems.length === 0}>Export CSV</Button>
+              <Button onClick={handleExportTransferCsv} disabled={!allLineItems.some((li) => li.replQty > 0)}>
+                Export Transfer CSV
+              </Button>
+            </InlineStack>
+          </InlineStack>
+          {rows.length === 0 ? (
+            <EmptyState heading="No line items match" image="" />
+          ) : (
+            <BlockStack gap="200">
+              <DataTable
+                columnContentTypes={['text', 'text', 'text', 'text', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric']}
+                headings={headings}
+                rows={rows}
+                sortable={[true, true, true, true, true, true, true, true, true]}
+                defaultSortDirection="descending"
+                initialSortColumnIndex={sortIndex}
+                onSort={handleSort}
+              />
+              {pageCount > 1 && (
+                <Box paddingBlockStart="200">
+                  <InlineStack align="center">
+                    <Pagination
+                      hasPrevious={clampedPage > 0}
+                      onPrevious={() => setPage(clampedPage - 1)}
+                      hasNext={clampedPage < pageCount - 1}
+                      onNext={() => setPage(clampedPage + 1)}
+                      label={`Page ${clampedPage + 1} of ${pageCount}`}
+                    />
+                  </InlineStack>
+                </Box>
+              )}
+            </BlockStack>
+          )}
+        </BlockStack>
+      )}
+
+      {scheduleModalOpen && scheduleForm && (
+        <Modal
+          open
+          onClose={() => setScheduleModalOpen(false)}
+          title="Weekly replenishment schedule"
+          primaryAction={{ content: 'Save', onAction: handleSaveSchedule, loading: settingsMutation.isPending }}
+          secondaryActions={[{ content: 'Cancel', onAction: () => setScheduleModalOpen(false) }]}
+        >
+          <Modal.Section>
+            <BlockStack gap="400">
+              {settingsMutation.error && <Banner tone="critical">{settingsMutation.error.message}</Banner>}
+              <Checkbox
+                label="Automatically generate this report every Monday (03:00, store time)"
+                checked={scheduleForm.enabled}
+                onChange={(checked) => setScheduleForm((f) => ({ ...f, enabled: checked }))}
+              />
+              <TextField
+                label="Sales period length (days)" type="number" autoComplete="off"
+                value={scheduleForm.periodDays}
+                onChange={(v) => setScheduleForm((f) => ({ ...f, periodDays: v }))}
+                helpText="Each scheduled run covers this many days up to yesterday (store time)."
+              />
+              <Select
+                label="Source location (pull from)" placeholder="Select a location"
+                options={locationOptions} value={scheduleForm.sourceLocationId}
+                onChange={(v) => setScheduleForm((f) => ({ ...f, sourceLocationId: v }))}
+              />
+              <Select
+                label="Destination location (top up to Max Qty)" placeholder="Select a location"
+                options={locationOptions} value={scheduleForm.destLocationId}
+                onChange={(v) => setScheduleForm((f) => ({ ...f, destLocationId: v }))}
+              />
+            </BlockStack>
+          </Modal.Section>
+        </Modal>
+      )}
+
+      {toast && <Toast content={toast.message} onDismiss={() => setToast(null)} duration={2500} />}
+    </BlockStack>
+  );
+}
+
 function Placeholder({ title }) {
   return <EmptyState heading={`${title} coming soon`} image=""><p>This report is not yet implemented.</p></EmptyState>;
 }
@@ -525,6 +848,7 @@ const TABS = [
   { id: 'stock-on-hand', content: 'Stock on Hand', path: 'stock-on-hand' },
   { id: 'purchase-orders', content: 'Purchase Orders', path: 'purchase-orders' },
   { id: 'foot-traffic', content: 'Foot Traffic', path: 'foot-traffic' },
+  { id: 'replenishment', content: 'Replenishment', path: 'replenishment' },
   { id: 'abc', content: 'ABC Analysis', path: 'abc' },
   { id: 'best-sellers', content: 'Best Sellers', path: 'best-sellers' },
   { id: 'orders', content: 'Orders', path: 'orders' },
@@ -549,12 +873,13 @@ export default function Reports() {
       case 'stock-on-hand': return <StockOnHandReport />;
       case 'purchase-orders': return <POHistoryReport />;
       case 'foot-traffic': return <FootTrafficReport />;
+      case 'replenishment': return <ReplenishmentReport />;
       default: return <Placeholder title={TABS[activeTab]?.content} />;
     }
   };
 
   return (
-    <Page title="Reports" fullWidth={TABS[activeTab]?.path === 'foot-traffic'}>
+    <Page title="Reports" fullWidth={['foot-traffic', 'replenishment'].includes(TABS[activeTab]?.path)}>
       <Card padding="0">
         <Tabs tabs={TABS} selected={activeTab} onSelect={handleTabChange}>
           <div style={{ padding: '1.25rem' }}>{content()}</div>

@@ -9,6 +9,7 @@ import {
   OrderIcon,
   OrderDraftIcon,
   ProductIcon,
+  MaximizeIcon,
   AdjustIcon,
   TransferIcon,
   ChartLineIcon,
@@ -16,6 +17,7 @@ import {
   PackageIcon,
   StoreIcon,
   WifiIcon,
+  RefreshIcon,
 } from '@shopify/polaris-icons';
 
 import { getMe, logout as logoutApi } from './api/auth.js';
@@ -31,6 +33,7 @@ import PurchaseOrders from './pages/PurchaseOrders/index.jsx';
 import PODetail from './pages/PurchaseOrders/PODetail.jsx';
 import Orders from './pages/Orders/index.jsx';
 import Products from './pages/Inventory/Products.jsx';
+import MaxQuantity from './pages/MaxQuantity/index.jsx';
 import Adjustments from './pages/Inventory/Adjustments.jsx';
 import AdjustmentDetail from './pages/Inventory/AdjustmentDetail.jsx';
 import Transfers from './pages/Transfers/index.jsx';
@@ -164,6 +167,13 @@ export default function App() {
             selected: is('/inventory/products'),
           },
           {
+            label: 'Max Quantity',
+            icon: MaximizeIcon,
+            url: '/inventory/max-quantity',
+            onClick: () => navigate('/inventory/max-quantity'),
+            selected: is('/inventory/max-quantity'),
+          },
+          {
             label: 'Adjustments',
             icon: AdjustIcon,
             url: '/inventory/adjustments',
@@ -223,6 +233,13 @@ export default function App() {
             url: '/reports/purchase-orders',
             onClick: () => navigate('/reports/purchase-orders'),
             selected: is('/reports/purchase-orders'),
+          },
+          {
+            label: 'Replenishment',
+            icon: RefreshIcon,
+            url: '/reports/replenishment',
+            onClick: () => navigate('/reports/replenishment'),
+            selected: is('/reports/replenishment'),
           },
           {
             label: 'Stock on Hand',
@@ -290,6 +307,7 @@ export default function App() {
         <Route path="/orders" element={<Orders />} />
         <Route path="/draft-orders" element={<DraftOrders />} />
         <Route path="/inventory/products" element={<Products />} />
+        <Route path="/inventory/max-quantity" element={<MaxQuantity />} />
         <Route path="/inventory/adjustments" element={<Adjustments />} />
         <Route path="/inventory/adjustments/:id" element={<AdjustmentDetail />} />
         <Route path="/transfers/*" element={<Transfers />} />

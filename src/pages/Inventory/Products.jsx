@@ -553,8 +553,9 @@ export default function Products() {
           <BlockStack gap="400">
             <Text>
               Upload a CSV file with a <Text as="span" fontWeight="semibold">shopifyVariantId</Text> column
-              plus any of: <Text as="span" tone="subdued">costPrice, avgCost, minOrder, minStock, maxStock,
-              reorderPoint, binLocation, text1, text2, text3</Text>.
+              plus any of: <Text as="span" tone="subdued">costPrice, avgCost, minOrder, minStock,
+              reorderPoint, binLocation, text1, text2, text3</Text>. For Max Qty (per location), use the
+              Max Quantity page instead.
             </Text>
 
             {importError && <Banner tone="critical">{importError}</Banner>}
