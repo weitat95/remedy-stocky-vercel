@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import {
   Page, Card, Tabs, DataTable, Text, Badge, Spinner, Button, Checkbox,
   Banner, EmptyState, InlineStack, BlockStack, Select, TextField, Tooltip, Icon, Pagination, Box, InlineGrid, Toast,
-  Modal,
+  Modal, Link,
 } from '@shopify/polaris';
 import { QuestionCircleIcon } from '@shopify/polaris-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -13,6 +13,7 @@ import {
   getReplenishmentSettings, updateReplenishmentSettings,
 } from '../../api/reports.js';
 import { getLocations } from '../../api/inventory.js';
+import { getVendors } from '../../api/vendors.js';
 import { downloadCSVFile } from '../../utils/csv.js';
 
 const FOOT_TRAFFIC_PAGE_SIZE = 50;
@@ -522,9 +523,20 @@ function FootTrafficReport() {
 
 // index into a replenishment line item — order matches the DataTable headings/columns
 const REPL_SORT_FIELDS = [
-  'vendor', 'sku', 'productTitle', 'variantTitle', 'maxStock', 'soldQty', 'sourceQty', 'destQty', 'replQty',
+  'vendor', 'productType', 'sku', 'productTitle', 'variantTitle', 'maxStock', 'soldQty', 'sourceQty', 'destQty', 'replQty',
 ];
 const REPL_PAGE_SIZE = 50;
+
+// Shopify's order.sourceName values this app labels explicitly — matches
+// KNOWN_SALES_CHANNELS in backend/src/services/replenishmentReport.js. Anything
+// else (a custom sales channel app) falls under "Other".
+const SALES_CHANNEL_OPTIONS = [
+  { label: 'All channels', value: '' },
+  { label: 'Online Store', value: 'web' },
+  { label: 'POS', value: 'pos' },
+  { label: 'Draft Orders', value: 'shopify_draft_order' },
+  { label: 'Other', value: 'other' },
+];
 
 // Filesystem/URL-safe stamp for filenames — e.g. "2026-09-29_0300".
 function compactTimestamp(iso) {
@@ -539,24 +551,46 @@ function replQtyCell(replQty) {
   return '0';
 }
 
+// Friendly label for an individual order's sourceName, for the Sold Qty
+// drill-down modal — unlike the aggregate SALES_CHANNEL_OPTIONS filter (which
+// groups anything unrecognized under "Other"), an unrecognized value is shown
+// as-is here since it's more informative per-order than a generic bucket.
+const KNOWN_CHANNEL_LABELS = { web: 'Online Store', pos: 'POS', shopify_draft_order: 'Draft Order' };
+function channelLabel(sourceName) {
+  if (!sourceName) return '—';
+  return KNOWN_CHANNEL_LABELS[sourceName] || sourceName;
+}
+
+// GID -> trailing numeric id, e.g. "gid://shopify/Order/123" -> "123" — for
+// linking out to Shopify admin, which uses numeric ids in its own URLs.
+function gidToNumericId(gid) {
+  return gid ? gid.split('/').pop() : '';
+}
+
 function ReplenishmentReport() {
   const queryClient = useQueryClient();
   const [from, setFrom] = useState(() => isoDaysAgo(7));
   const [to, setTo] = useState(() => isoDaysAgo(0));
   const [sourceLocationId, setSourceLocationId] = useState('');
   const [destLocationId, setDestLocationId] = useState('');
+  const [vendorFilter, setVendorFilter] = useState('');
+  const [productTypeFilter, setProductTypeFilter] = useState('');
+  const [salesChannelFilter, setSalesChannelFilter] = useState('');
+  const [posLocationFilter, setPosLocationFilter] = useState('');
   const [seededFromSettings, setSeededFromSettings] = useState(false);
   const [activeReportId, setActiveReportId] = useState(null);
   const [seededFromHistory, setSeededFromHistory] = useState(false);
   const [onlyNeeding, setOnlyNeeding] = useState(false);
   const [page, setPage] = useState(0);
-  const [sortIndex, setSortIndex] = useState(8); // REPL QTY
+  const [sortIndex, setSortIndex] = useState(9); // REPL QTY
   const [sortDirection, setSortDirection] = useState('descending');
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [scheduleForm, setScheduleForm] = useState(null);
   const [toast, setToast] = useState(null);
+  const [salesDetailItem, setSalesDetailItem] = useState(null); // line item whose Sold Qty was clicked
 
   const { data: locationsData } = useQuery({ queryKey: ['locations'], queryFn: getLocations });
+  const { data: vendorsData } = useQuery({ queryKey: ['vendors', { includeHidden: true }], queryFn: () => getVendors({ includeHidden: true }) });
   const { data: settingsData } = useQuery({
     queryKey: ['reports', 'replenishment-settings'],
     queryFn: getReplenishmentSettings,
@@ -573,7 +607,12 @@ function ReplenishmentReport() {
 
   const locations = locationsData?.data || [];
   const locationOptions = locations.map((l) => ({ label: l.name, value: l.id }));
+  const posLocationOptions = [{ label: 'All locations', value: '' }, ...locationOptions];
   const locationsById = Object.fromEntries(locations.map((l) => [l.id, l.name]));
+  const vendorOptions = [
+    { label: 'All vendors', value: '' },
+    ...(vendorsData || []).map((v) => ({ label: v.name, value: v.name })),
+  ];
   const history = historyData?.data || [];
 
   // Seed the From/To location pickers from the saved schedule once, so a manual
@@ -626,8 +665,14 @@ function ReplenishmentReport() {
   }, [settingsData]);
 
   const handleRun = useCallback(() => {
-    runMutation.mutate({ from, to, sourceLocationId, destLocationId });
-  }, [runMutation, from, to, sourceLocationId, destLocationId]);
+    runMutation.mutate({
+      from, to, sourceLocationId, destLocationId,
+      vendor: vendorFilter || undefined,
+      productType: productTypeFilter.trim() || undefined,
+      salesChannel: salesChannelFilter || undefined,
+      posLocationId: posLocationFilter || undefined,
+    });
+  }, [runMutation, from, to, sourceLocationId, destLocationId, vendorFilter, productTypeFilter, salesChannelFilter, posLocationFilter]);
 
   const handleSaveSchedule = useCallback(() => {
     settingsMutation.mutate(scheduleForm);
@@ -645,13 +690,17 @@ function ReplenishmentReport() {
   const pagedLineItems = sortedLineItems.slice(clampedPage * REPL_PAGE_SIZE, clampedPage * REPL_PAGE_SIZE + REPL_PAGE_SIZE);
 
   const toCsvRow = (li) => [
-    li.vendor || '—', li.sku || '—', li.productTitle || '—', li.variantTitle || '—',
+    li.vendor || '—', li.productType || '—', li.sku || '—', li.productTitle || '—', li.variantTitle || '—',
     li.maxStock ?? '—', li.soldQty, li.sourceQty ?? '—', li.destQty ?? '—', li.replQty ?? '—',
   ];
-  const headings = ['Vendor', 'SKU', 'Product', 'Variant', 'Max Qty', 'Sold Qty', 'Source Qty', 'Dest Qty', 'REPL QTY'];
+  const headings = ['Vendor', 'Product Type', 'SKU', 'Product', 'Variant', 'Max Qty', 'Sold Qty', 'Source Qty', 'Dest Qty', 'REPL QTY'];
   const rows = pagedLineItems.map((li) => {
     const cells = toCsvRow(li);
-    cells[8] = replQtyCell(li.replQty);
+    // Sold Qty is clickable when it has at least one contributing order to show.
+    cells[6] = li.salesDetail?.length
+      ? <Button variant="plain" onClick={() => setSalesDetailItem(li)}>{li.soldQty}</Button>
+      : li.soldQty;
+    cells[9] = replQtyCell(li.replQty);
     return cells;
   });
 
@@ -670,6 +719,10 @@ function ReplenishmentReport() {
         ['Generated at', new Date(report.generatedAt).toLocaleString()],
         ['Source location', locationsById[report.sourceLocationId] || report.sourceLocationId],
         ['Destination location', locationsById[report.destLocationId] || report.destLocationId],
+        ...(report.vendor ? [['Vendor filter', report.vendor]] : []),
+        ...(report.productType ? [['Product Type filter', report.productType]] : []),
+        ...(report.salesChannel ? [['Sales Channel filter', SALES_CHANNEL_OPTIONS.find((o) => o.value === report.salesChannel)?.label || report.salesChannel]] : []),
+        ...(report.posLocationId ? [['POS Location filter', locationsById[report.posLocationId] || report.posLocationId]] : []),
         [],
         headings,
         ...sortedLineItems.map(toCsvRow),
@@ -722,6 +775,26 @@ function ReplenishmentReport() {
         </InlineStack>
       </InlineStack>
 
+      <InlineStack gap="200" blockAlign="center" wrap>
+        <Text as="span" tone="subdued">Filters</Text>
+        <Select label="Vendor" labelInline options={vendorOptions} value={vendorFilter} onChange={setVendorFilter} />
+        <TextField
+          label="Product Type" labelHidden placeholder="Product Type"
+          value={productTypeFilter} onChange={setProductTypeFilter} autoComplete="off"
+        />
+        <Select
+          label="Sales Channel" labelInline options={SALES_CHANNEL_OPTIONS}
+          value={salesChannelFilter} onChange={setSalesChannelFilter}
+        />
+        <Select
+          label="POS Location" labelInline options={posLocationOptions}
+          value={posLocationFilter} onChange={setPosLocationFilter}
+        />
+      </InlineStack>
+      <Text as="span" tone="subdued">
+        Vendor and Product Type narrow which rows appear. Sales Channel and POS Location narrow Sold Qty only (and, like the date range, which variants qualify for a row at all).
+      </Text>
+
       {runMutation.error && <Banner tone="critical">{runMutation.error.message}</Banner>}
 
       {historyOptions.length > 0 && (
@@ -752,6 +825,17 @@ function ReplenishmentReport() {
               <Text as="span" tone="subdued">
                 {locationsById[report.sourceLocationId] || report.sourceLocationId} → {locationsById[report.destLocationId] || report.destLocationId}
               </Text>
+              {(report.vendor || report.productType || report.salesChannel || report.posLocationId) && (
+                <Text as="span" tone="subdued">
+                  Filters:{' '}
+                  {[
+                    report.vendor && `Vendor: ${report.vendor}`,
+                    report.productType && `Product Type: ${report.productType}`,
+                    report.salesChannel && `Channel: ${SALES_CHANNEL_OPTIONS.find((o) => o.value === report.salesChannel)?.label || report.salesChannel}`,
+                    report.posLocationId && `POS Location: ${locationsById[report.posLocationId] || report.posLocationId}`,
+                  ].filter(Boolean).join(' · ')}
+                </Text>
+              )}
             </BlockStack>
             <InlineStack gap="200" blockAlign="center">
               <Checkbox
@@ -770,10 +854,10 @@ function ReplenishmentReport() {
           ) : (
             <BlockStack gap="200">
               <DataTable
-                columnContentTypes={['text', 'text', 'text', 'text', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric']}
+                columnContentTypes={['text', 'text', 'text', 'text', 'text', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric']}
                 headings={headings}
                 rows={rows}
-                sortable={[true, true, true, true, true, true, true, true, true]}
+                sortable={[true, true, true, true, true, true, true, true, true, true]}
                 defaultSortDirection="descending"
                 initialSortColumnIndex={sortIndex}
                 onSort={handleSort}
@@ -829,6 +913,31 @@ function ReplenishmentReport() {
                 onChange={(v) => setScheduleForm((f) => ({ ...f, destLocationId: v }))}
               />
             </BlockStack>
+          </Modal.Section>
+        </Modal>
+      )}
+
+      {salesDetailItem && (
+        <Modal
+          open
+          onClose={() => setSalesDetailItem(null)}
+          title={`Sold Qty detail — ${salesDetailItem.sku || salesDetailItem.productTitle}`}
+          primaryAction={{ content: 'Close', onAction: () => setSalesDetailItem(null) }}
+        >
+          <Modal.Section>
+            <DataTable
+              columnContentTypes={['text', 'text', 'numeric', 'text', 'text']}
+              headings={['Order', 'Date', 'Quantity', 'Sales Channel', 'POS Location']}
+              rows={(salesDetailItem.salesDetail || []).map((d) => [
+                report?.shopifyAdminBase
+                  ? <Link url={`${report.shopifyAdminBase}/orders/${gidToNumericId(d.orderId)}`} external>{d.orderName}</Link>
+                  : d.orderName,
+                new Date(d.createdAt).toLocaleString(),
+                d.quantity,
+                channelLabel(d.sourceName),
+                d.locationName || 'Online',
+              ])}
+            />
           </Modal.Section>
         </Modal>
       )}
