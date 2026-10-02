@@ -531,12 +531,15 @@ const REPL_PAGE_SIZE = 50;
 // KNOWN_SALES_CHANNELS in backend/src/services/replenishmentReport.js. Anything
 // else (a custom sales channel app) falls under "Other".
 const SALES_CHANNEL_OPTIONS = [
-  { label: 'All channels', value: '' },
   { label: 'Online Store', value: 'web' },
   { label: 'POS', value: 'pos' },
   { label: 'Draft Orders', value: 'shopify_draft_order' },
   { label: 'Other', value: 'other' },
 ];
+
+// report.salesChannel is a comma-separated list of SALES_CHANNEL_OPTIONS values.
+const channelsLabel = (csv) => String(csv).split(',')
+  .map((v) => SALES_CHANNEL_OPTIONS.find((o) => o.value === v)?.label || v).join(', ');
 
 // Filesystem/URL-safe stamp for filenames — e.g. "2026-09-29_0300".
 function compactTimestamp(iso) {
@@ -575,7 +578,7 @@ function ReplenishmentReport() {
   const [destLocationId, setDestLocationId] = useState('');
   const [vendorFilter, setVendorFilter] = useState('');
   const [productTypeFilter, setProductTypeFilter] = useState('');
-  const [salesChannelFilter, setSalesChannelFilter] = useState('');
+  const [salesChannelFilter, setSalesChannelFilter] = useState([]);
   const [posLocationFilter, setPosLocationFilter] = useState('');
   const [seededFromSettings, setSeededFromSettings] = useState(false);
   const [activeReportId, setActiveReportId] = useState(null);
@@ -669,7 +672,7 @@ function ReplenishmentReport() {
       from, to, sourceLocationId, destLocationId,
       vendor: vendorFilter || undefined,
       productType: productTypeFilter.trim() || undefined,
-      salesChannel: salesChannelFilter || undefined,
+      salesChannel: salesChannelFilter.length ? salesChannelFilter : undefined,
       posLocationId: posLocationFilter || undefined,
     });
   }, [runMutation, from, to, sourceLocationId, destLocationId, vendorFilter, productTypeFilter, salesChannelFilter, posLocationFilter]);
@@ -721,7 +724,7 @@ function ReplenishmentReport() {
         ['Destination location', locationsById[report.destLocationId] || report.destLocationId],
         ...(report.vendor ? [['Vendor filter', report.vendor]] : []),
         ...(report.productType ? [['Product Type filter', report.productType]] : []),
-        ...(report.salesChannel ? [['Sales Channel filter', SALES_CHANNEL_OPTIONS.find((o) => o.value === report.salesChannel)?.label || report.salesChannel]] : []),
+        ...(report.salesChannel ? [['Sales Channel filter', channelsLabel(report.salesChannel)]] : []),
         ...(report.posLocationId ? [['POS Location filter', locationsById[report.posLocationId] || report.posLocationId]] : []),
         [],
         headings,
@@ -782,10 +785,16 @@ function ReplenishmentReport() {
           label="Product Type" labelHidden placeholder="Product Type"
           value={productTypeFilter} onChange={setProductTypeFilter} autoComplete="off"
         />
-        <Select
-          label="Sales Channel" labelInline options={SALES_CHANNEL_OPTIONS}
-          value={salesChannelFilter} onChange={setSalesChannelFilter}
-        />
+        <InlineStack gap="300" blockAlign="center">
+          <Text as="span" tone="subdued">Sales Channel:</Text>
+          {SALES_CHANNEL_OPTIONS.map((o) => (
+            <Checkbox
+              key={o.value} label={o.label}
+              checked={salesChannelFilter.includes(o.value)}
+              onChange={(on) => setSalesChannelFilter((prev) => (on ? [...prev, o.value] : prev.filter((v) => v !== o.value)))}
+            />
+          ))}
+        </InlineStack>
         <Select
           label="POS Location" labelInline options={posLocationOptions}
           value={posLocationFilter} onChange={setPosLocationFilter}
@@ -831,7 +840,7 @@ function ReplenishmentReport() {
                   {[
                     report.vendor && `Vendor: ${report.vendor}`,
                     report.productType && `Product Type: ${report.productType}`,
-                    report.salesChannel && `Channel: ${SALES_CHANNEL_OPTIONS.find((o) => o.value === report.salesChannel)?.label || report.salesChannel}`,
+                    report.salesChannel && `Channel: ${channelsLabel(report.salesChannel)}`,
                     report.posLocationId && `POS Location: ${locationsById[report.posLocationId] || report.posLocationId}`,
                   ].filter(Boolean).join(' · ')}
                 </Text>
