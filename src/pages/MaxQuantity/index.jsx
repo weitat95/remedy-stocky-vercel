@@ -1,7 +1,7 @@
 import React, { useCallback, useRef, useState } from 'react';
 import {
   Page, Card, IndexTable, Text, Button, Banner, Spinner, Pagination, Box,
-  TextField, Select, InlineStack, BlockStack, Modal, Toast, EmptyState,
+  TextField, Select, InlineStack, BlockStack, Modal, Toast, EmptyState, Checkbox,
 } from '@shopify/polaris';
 import { SearchIcon } from '@shopify/polaris-icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -38,6 +38,8 @@ const MAX_QTY_HEADER_ALIASES = ['max_qty', 'maxqty', 'max_stock', 'maxstock'];
 
 // Composite key for the edits map — Max Qty is per (variant, location), not
 // global, so a variant can have a different pending edit at each location.
+const HIDDEN_LOCATIONS_STORAGE_KEY = 'maxQtyHiddenLocationIds';
+
 const editKey = (variantId, locationId) => `${variantId}::${locationId}`;
 
 // Runs `fn` over `items` with at most `limit` in flight at once. A plain
@@ -84,6 +86,31 @@ export default function MaxQuantity() {
 
   const { data: locationsData } = useQuery({ queryKey: ['locations'], queryFn: getLocations });
   const locations = locationsData?.data || [];
+
+  // Hidden (not visible) IDs are stored, so a newly added location shows by default.
+  const [hiddenLocationIds, setHiddenLocationIds] = useState(() => {
+    try {
+      const stored = localStorage.getItem(HIDDEN_LOCATIONS_STORAGE_KEY);
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+  const filteredLocations = locations.filter((l) => !hiddenLocationIds.has(l.id));
+  // Never end up with zero columns (e.g. stale saved IDs) — fall back to all.
+  const visibleLocations = filteredLocations.length ? filteredLocations : locations;
+  const [columnsModalOpen, setColumnsModalOpen] = useState(false);
+
+  const saveHiddenLocationIds = useCallback((next) => {
+    try { localStorage.setItem(HIDDEN_LOCATIONS_STORAGE_KEY, JSON.stringify([...next])); } catch { /* ignore */ }
+    setHiddenLocationIds(next);
+  }, []);
+  const toggleLocationVisible = (locationId, checked) => {
+    const next = new Set(hiddenLocationIds);
+    if (checked) next.delete(locationId); else next.add(locationId);
+    saveHiddenLocationIds(next);
+  };
+  const keepFirstVisibleOnly = () => saveHiddenLocationIds(new Set(locations.slice(1).map((l) => l.id)));
 
   // ── Search ────────────────────────────────────────────────────────────────
   const [searchDraft, setSearchDraft] = useState('');
@@ -157,6 +184,8 @@ export default function MaxQuantity() {
   }, []);
 
   const dirtyCount = Object.keys(edits).length;
+  const visibleIdSet = new Set(visibleLocations.map((l) => l.id));
+  const hiddenDirtyCount = Object.keys(edits).filter((k) => !visibleIdSet.has(k.split('::')[1])).length;
 
   const handleSaveChanges = useCallback(async () => {
     setSaving(true);
@@ -324,7 +353,7 @@ export default function MaxQuantity() {
       <IndexTable.Cell>{row.variantTitle || '—'}</IndexTable.Cell>
       <IndexTable.Cell>{row.sku}</IndexTable.Cell>
       <IndexTable.Cell>{row.vendor}</IndexTable.Cell>
-      {locations.map((loc) => {
+      {visibleLocations.map((loc) => {
         const key = editKey(row.shopifyVariantId, loc.id);
         const edit = edits[key];
         const original = row.maxStockByLocation[loc.id];
@@ -354,6 +383,7 @@ export default function MaxQuantity() {
       title="Max Quantity"
       subtitle="Per-location shelf ceiling used by the Replenishment report"
       primaryAction={{ content: 'Import CSV', onAction: () => { setImportError(null); setImportResult(null); setImportOpen(true); } }}
+      secondaryActions={[{ content: 'Columns', onAction: () => setColumnsModalOpen(true), disabled: !locations.length }]}
     >
       <Card>
         <BlockStack gap="400">
@@ -381,7 +411,7 @@ export default function MaxQuantity() {
           {dirtyCount > 0 && (
             <Banner tone="warning">
               <InlineStack align="space-between" blockAlign="center">
-                <Text as="span">{dirtyCount} unsaved change{dirtyCount === 1 ? '' : 's'}</Text>
+                <Text as="span">{dirtyCount} unsaved change{dirtyCount === 1 ? '' : 's'}{hiddenDirtyCount > 0 ? ` (${hiddenDirtyCount} in hidden columns)` : ''}</Text>
                 <InlineStack gap="200">
                   <Button onClick={handleDiscardChanges} disabled={saving}>Discard</Button>
                   <Button variant="primary" onClick={handleSaveChanges} loading={saving}>Save changes</Button>
@@ -403,7 +433,7 @@ export default function MaxQuantity() {
                 itemCount={rows.length}
                 headings={[
                   { title: 'Product' }, { title: 'Variant' }, { title: 'SKU' }, { title: 'Vendor' },
-                  ...locations.map((l) => ({ title: l.name })),
+                  ...visibleLocations.map((l) => ({ title: l.name })),
                 ]}
                 selectable={false}
               >
@@ -424,6 +454,51 @@ export default function MaxQuantity() {
           )}
         </BlockStack>
       </Card>
+
+      <Modal
+        open={columnsModalOpen}
+        onClose={() => setColumnsModalOpen(false)}
+        title="Location columns"
+        primaryAction={{ content: 'Done', onAction: () => setColumnsModalOpen(false) }}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <BlockStack gap="200">
+              <Text tone="subdued">Choose which locations to show as columns. Hidden locations are still covered by CSV import.</Text>
+              <InlineStack gap="200">
+                <Button
+                  variant="plain"
+                  size="slim"
+                  onClick={() => saveHiddenLocationIds(new Set())}
+                  disabled={visibleLocations.length === locations.length}
+                >
+                  Select all
+                </Button>
+                <Button
+                  variant="plain"
+                  size="slim"
+                  onClick={keepFirstVisibleOnly}
+                  disabled={visibleLocations.length <= 1}
+                >
+                  Deselect all
+                </Button>
+              </InlineStack>
+            </BlockStack>
+            {locations.map((loc) => {
+              const checked = visibleIdSet.has(loc.id);
+              return (
+                <Checkbox
+                  key={loc.id}
+                  label={loc.name}
+                  checked={checked}
+                  disabled={checked && visibleLocations.length === 1}
+                  onChange={(c) => toggleLocationVisible(loc.id, c)}
+                />
+              );
+            })}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
 
       <Modal
         open={importOpen}
