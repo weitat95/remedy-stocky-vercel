@@ -521,10 +521,56 @@ function FootTrafficReport() {
   );
 }
 
-// index into a replenishment line item — order matches the DataTable headings/columns
-const REPL_SORT_FIELDS = [
-  'vendor', 'productType', 'sku', 'productTitle', 'variantTitle', 'maxStock', 'soldQty', 'sourceQty', 'destQty', 'replQty',
-];
+// Line items from before multi-store support have no perDest/endStock — read
+// them as a single-destination report so old snapshots still open.
+function normalizeLineItem(li, destIds) {
+  const perDest = li.perDest || {
+    [destIds[0]]: { maxStock: li.maxStock, destQty: li.destQty, soldQty: li.soldQty, replQty: li.replQty },
+  };
+  const endStock = li.endStock !== undefined
+    ? li.endStock
+    : (li.sourceQty == null ? null : li.sourceQty - Math.max(li.replQty ?? 0, 0));
+  const repls = Object.values(perDest).map((d) => d.replQty);
+  const replTotal = repls.every((r) => r == null) ? null : repls.reduce((n, r) => n + (r ?? 0), 0);
+  return { ...li, perDest, endStock, replTotal, needsRepl: repls.some((r) => r > 0) };
+}
+
+// Ordered multi-select of destination stores. Selection order matters: it's the
+// tiebreak for odd units when the source qty is split between stores.
+function DestPicker({ locations, sourceId, value, onChange }) {
+  const options = locations.filter((l) => l.id !== sourceId);
+  const nameOf = (id) => locations.find((l) => l.id === id)?.name || id;
+  const move = (i, d) => {
+    const next = [...value];
+    [next[i], next[i + d]] = [next[i + d], next[i]];
+    onChange(next);
+  };
+  return (
+    <BlockStack gap="100">
+      <InlineStack gap="300" blockAlign="center" wrap>
+        <Text as="span" tone="subdued">Destinations:</Text>
+        {options.map((l) => (
+          <Checkbox
+            key={l.id} label={l.name} checked={value.includes(l.id)}
+            onChange={(on) => onChange(on ? [...value, l.id] : value.filter((v) => v !== l.id))}
+          />
+        ))}
+      </InlineStack>
+      {value.length > 1 && (
+        <InlineStack gap="200" blockAlign="center" wrap>
+          <Text as="span" tone="subdued">Allocation order (source stock is split equally; extra units go to the first):</Text>
+          {value.map((id, i) => (
+            <InlineStack key={id} gap="050" blockAlign="center" wrap={false}>
+              <Text as="span">{i + 1}. {nameOf(id)}</Text>
+              <Button variant="plain" disabled={i === 0} onClick={() => move(i, -1)} accessibilityLabel={`Move ${nameOf(id)} earlier`}>↑</Button>
+              <Button variant="plain" disabled={i === value.length - 1} onClick={() => move(i, 1)} accessibilityLabel={`Move ${nameOf(id)} later`}>↓</Button>
+            </InlineStack>
+          ))}
+        </InlineStack>
+      )}
+    </BlockStack>
+  );
+}
 const REPL_PAGE_SIZE = 50;
 
 // Shopify's order.sourceName values this app labels explicitly — matches
@@ -580,7 +626,7 @@ function ReplenishmentReport() {
   const [from, setFrom] = useState(() => isoDaysAgo(7));
   const [to, setTo] = useState(() => isoDaysAgo(0));
   const [sourceLocationId, setSourceLocationId] = useState('');
-  const [destLocationId, setDestLocationId] = useState('');
+  const [destLocationIds, setDestLocationIds] = useState([]);
   const [vendorFilter, setVendorFilter] = useState('');
   const [productTypeFilter, setProductTypeFilter] = useState('');
   const [salesChannelFilter, setSalesChannelFilter] = useState([]);
@@ -590,7 +636,7 @@ function ReplenishmentReport() {
   const [seededFromHistory, setSeededFromHistory] = useState(false);
   const [onlyNeeding, setOnlyNeeding] = useState(false);
   const [page, setPage] = useState(0);
-  const [sortIndex, setSortIndex] = useState(9); // REPL QTY
+  const [sortKey, setSortKey] = useState('replTotal');
   const [sortDirection, setSortDirection] = useState('descending');
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [scheduleForm, setScheduleForm] = useState(null);
@@ -627,13 +673,17 @@ function ReplenishmentReport() {
   // run doesn't start from blank every time the settings already say which
   // locations this store uses. Only runs once — doesn't fight the user's own pick.
   useEffect(() => {
-    if (seededFromSettings || !settingsData?.data) return;
+    if (seededFromSettings || !settingsData?.data || !locationsData?.data) return;
     const s = settingsData.data;
-    if (!s.sourceLocationId && !s.destLocationId) return;
-    setSourceLocationId((cur) => cur || s.sourceLocationId || '');
-    setDestLocationId((cur) => cur || s.destLocationId || '');
+    // The saved schedule can reference a location that's since been deactivated/removed
+    // (or came from another store) — it'd have no checkbox, so drop it instead of
+    // silently running against an invisible destination.
+    const known = new Set(locationsData.data.map((l) => l.id));
+    const validDests = (s.destLocationIds || []).filter((id) => known.has(id));
+    setSourceLocationId((cur) => cur || (known.has(s.sourceLocationId) ? s.sourceLocationId : ''));
+    setDestLocationIds((cur) => (cur.length ? cur : validDests));
     setSeededFromSettings(true);
-  }, [seededFromSettings, settingsData]);
+  }, [seededFromSettings, settingsData, locationsData]);
 
   // Land on the most recently generated report on first load, if any exist.
   useEffect(() => {
@@ -662,61 +712,104 @@ function ReplenishmentReport() {
   });
 
   const openScheduleModal = useCallback(() => {
-    const s = settingsData?.data || { enabled: false, periodDays: 7, sourceLocationId: '', destLocationId: '' };
+    const s = settingsData?.data || { enabled: false, periodDays: 7, sourceLocationId: '', destLocationIds: [] };
+    const known = new Set(locations.map((l) => l.id));
     setScheduleForm({
       enabled: !!s.enabled,
       periodDays: String(s.periodDays ?? 7),
-      sourceLocationId: s.sourceLocationId || '',
-      destLocationId: s.destLocationId || '',
+      sourceLocationId: known.has(s.sourceLocationId) ? s.sourceLocationId : '',
+      destLocationIds: (s.destLocationIds || []).filter((id) => known.has(id)),
     });
     setScheduleModalOpen(true);
-  }, [settingsData]);
+  }, [settingsData, locations]);
 
   const handleRun = useCallback(() => {
     runMutation.mutate({
-      from, to, sourceLocationId, destLocationId,
+      from, to, sourceLocationId, destLocationIds,
       vendor: vendorFilter || undefined,
       productType: productTypeFilter.trim() || undefined,
       salesChannel: salesChannelFilter.length ? salesChannelFilter : undefined,
       posLocationId: posLocationFilter || undefined,
     });
-  }, [runMutation, from, to, sourceLocationId, destLocationId, vendorFilter, productTypeFilter, salesChannelFilter, posLocationFilter]);
+  }, [runMutation, from, to, sourceLocationId, destLocationIds, vendorFilter, productTypeFilter, salesChannelFilter, posLocationFilter]);
 
   const handleSaveSchedule = useCallback(() => {
     settingsMutation.mutate(scheduleForm);
   }, [settingsMutation, scheduleForm]);
 
   const report = detailData?.data || null;
-  const allLineItems = report?.lineItems || [];
-  const filteredLineItems = onlyNeeding ? allLineItems.filter((li) => li.replQty > 0) : allLineItems;
+  const destIds = report?.destLocationIds?.length ? report.destLocationIds : [report?.destLocationId];
+  const multi = destIds.length > 1;
+  const destName = (id) => locationsById[id] || id;
+  const allLineItems = (report?.lineItems || []).map((li) => normalizeLineItem(li, destIds));
+  const filteredLineItems = onlyNeeding ? allLineItems.filter((li) => li.needsRepl) : allLineItems;
+
+  // Column order: fixed product columns, source qty, total sold, then a group per
+  // destination store, then (multi-store only) total REPL and the source's End stock.
+  const columns = [
+    { key: 'vendor', heading: 'Vendor', get: (li) => li.vendor },
+    { key: 'productType', heading: 'Product Type', get: (li) => li.productType },
+    { key: 'sku', heading: 'SKU', get: (li) => li.sku },
+    { key: 'productTitle', heading: 'Product', get: (li) => li.productTitle },
+    { key: 'variantTitle', heading: 'Variant', get: (li) => li.variantTitle },
+    { key: 'sourceQty', heading: 'Source Qty', numeric: true, get: (li) => li.sourceQty },
+    { key: 'soldQty', heading: multi ? 'Sold Qty (total)' : 'Sold Qty', numeric: true, get: (li) => li.soldQty },
+    ...destIds.flatMap((id) => {
+      // `group` drives the upper header band + left border (and the CSV's group row).
+      const g = { group: id, groupLabel: destName(id) };
+      return [
+        { ...g, key: `max:${id}`, heading: 'Max Qty', numeric: true, get: (li) => li.perDest[id]?.maxStock },
+        { ...g, key: `qty:${id}`, heading: 'Dest Qty', numeric: true, get: (li) => li.perDest[id]?.destQty },
+        ...(multi ? [{ ...g, key: `sold:${id}`, heading: 'Sold Qty', numeric: true, get: (li) => li.perDest[id]?.soldQty }] : []),
+        { ...g, key: `repl:${id}`, heading: 'REPL QTY', numeric: true, repl: true, get: (li) => li.perDest[id]?.replQty },
+      ];
+    }),
+    // Same summary group regardless of store count, so the layout doesn't shift.
+    { group: 'summary', groupLabel: multi ? 'All stores' : 'Source', key: 'replTotal', heading: 'Total REPL', numeric: true, repl: true, get: (li) => li.replTotal },
+    { group: 'summary', groupLabel: multi ? 'All stores' : 'Source', key: 'endStock', heading: 'End Stock (source)', numeric: true, get: (li) => li.endStock },
+  ];
+  // Contiguous runs of columns sharing a group -> one band cell each (colSpan).
+  const groupBands = [];
+  columns.forEach((c, i) => {
+    const last = groupBands[groupBands.length - 1];
+    if (last && last.group === (c.group || null)) last.span += 1;
+    else groupBands.push({ group: c.group || null, label: c.groupLabel || '', span: 1, start: i });
+  });
+  const groupStarts = new Set(groupBands.filter((b) => b.group).map((b) => b.start));
+  const groupBorder = (i) => (groupStarts.has(i) ? '1px solid var(--p-color-border)' : undefined);
+  // Single-store reports have no Total REPL column, so fall back to the first REPL column.
+  const activeSortKey = columns.some((c) => c.key === sortKey) ? sortKey : columns.find((c) => c.repl).key;
+  const sortCol = columns.find((c) => c.key === activeSortKey);
   const sortedLineItems = [...filteredLineItems].sort((a, b) => {
     const dir = sortDirection === 'descending' ? -1 : 1;
-    return compareFootTrafficRows(a, b, REPL_SORT_FIELDS[sortIndex]) * dir;
+    return compareFootTrafficRows({ v: sortCol.get(a) }, { v: sortCol.get(b) }, 'v') * dir;
   });
   const pageCount = Math.max(1, Math.ceil(sortedLineItems.length / REPL_PAGE_SIZE));
   const clampedPage = Math.min(page, pageCount - 1);
   const pagedLineItems = sortedLineItems.slice(clampedPage * REPL_PAGE_SIZE, clampedPage * REPL_PAGE_SIZE + REPL_PAGE_SIZE);
 
-  const toCsvRow = (li) => [
-    li.vendor || '—', li.productType || '—', li.sku || '—', li.productTitle || '—', li.variantTitle || '—',
-    li.maxStock ?? '—', li.soldQty, li.sourceQty ?? '—', li.destQty ?? '—', li.replQty ?? '—',
-  ];
-  const headings = ['Vendor', 'Product Type', 'SKU', 'Product', 'Variant', 'Max Qty', 'Sold Qty', 'Source Qty', 'Dest Qty', 'REPL QTY'];
-  const rows = pagedLineItems.map((li) => {
-    const cells = toCsvRow(li);
-    // Sold Qty is clickable when it has at least one contributing order to show.
-    cells[6] = li.salesDetail?.length
-      ? <Button variant="plain" onClick={() => setSalesDetailItem(li)}>{li.soldQty}</Button>
-      : li.soldQty;
-    cells[9] = replQtyCell(li.replQty);
-    return cells;
-  });
+  const toCsvRow = (li) => columns.map((c) => c.get(li) ?? '—');
+  const headings = columns.map((c) => c.heading);
+  // CSV mirror of the on-screen group band: store name over the first column of its
+  // group, blank elsewhere — a spreadsheet has no colSpan to lean on.
+  // CSV can't carry borders, so an empty column is inserted before each group.
+  const withSeparators = (row, fill) => row.flatMap((v, i) => (groupStarts.has(i) ? [fill, v] : [v]));
+  const groupRow = columns.map((c, i) => (groupBands.some((b) => b.start === i && b.group) ? c.groupLabel : ''));
+  const renderCell = (li, c) => {
+    const v = c.get(li);
+    // Total Sold Qty is clickable when it has at least one contributing order to show.
+    if (c.key === 'soldQty' && li.salesDetail?.length) {
+      return <Button variant="plain" onClick={() => setSalesDetailItem(li)}>{li.soldQty}</Button>;
+    }
+    if (c.repl) return replQtyCell(v);
+    return v ?? '—';
+  };
 
-  const handleSort = useCallback((index, direction) => {
-    setSortIndex(index);
+  const handleSort = (index, direction) => {
+    setSortKey(columns[index].key);
     setSortDirection(direction);
     setPage(0);
-  }, []);
+  };
 
   const handleExportCsv = useCallback(() => {
     if (!report) return;
@@ -727,34 +820,36 @@ function ReplenishmentReport() {
         ['Inventory as at', inventoryAsAt(report.generatedAt)],
         ['Sales between', `${report.fromDate.slice(0, 10)} – ${report.toDate.slice(0, 10)}`],
         ['Source location', locationsById[report.sourceLocationId] || report.sourceLocationId],
-        ['Destination location', locationsById[report.destLocationId] || report.destLocationId],
+        [multi ? 'Destination locations (allocation order)' : 'Destination location', destIds.map(destName).join(', ')],
         ...(report.vendor ? [['Vendor filter', report.vendor]] : []),
         ...(report.productType ? [['Product Type filter', report.productType]] : []),
         ...(report.salesChannel ? [['Sales Channel filter', channelsLabel(report.salesChannel)]] : []),
         ...(report.posLocationId ? [['POS Location filter', locationsById[report.posLocationId] || report.posLocationId]] : []),
         [],
-        headings,
-        ...sortedLineItems.map(toCsvRow),
+        withSeparators(groupRow, ''),
+        withSeparators(headings, ''),
+        ...sortedLineItems.map((li) => withSeparators(toCsvRow(li), '')),
       ]
     );
   }, [report, sortedLineItems, locationsById]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleExportTransferCsv = useCallback(() => {
+  // One transfer file per destination — Transfers/index.jsx imports a single from/to pair.
+  const handleExportTransferCsv = (destId) => {
     if (!report) return;
     const stamp = compactTimestamp(report.generatedAt);
-    const transferRows = sortedLineItems.filter((li) => li.replQty > 0 && li.sku);
+    const transferRows = sortedLineItems.filter((li) => li.perDest[destId]?.replQty > 0 && li.sku);
     downloadCSVFile(
-      `replenishment-transfer_${report.fromDate.slice(0, 10)}_to_${report.toDate.slice(0, 10)}_generated-${stamp}.csv`,
-      [['sku', 'quantity'], ...transferRows.map((li) => [li.sku, li.replQty])]
+      `replenishment-transfer${multi ? `-${destName(destId).replace(/\W+/g, '_')}` : ''}_${report.fromDate.slice(0, 10)}_to_${report.toDate.slice(0, 10)}_generated-${stamp}.csv`,
+      [['sku', 'quantity'], ...transferRows.map((li) => [li.sku, li.perDest[destId].replQty])]
     );
-  }, [report, sortedLineItems]);
+  };
 
   const historyOptions = history.map((h) => ({
     label: `${h.fromDate.slice(0, 10)} → ${h.toDate.slice(0, 10)} · generated ${new Date(h.generatedAt).toLocaleString()} (${h.triggeredBy})`,
     value: h.id,
   }));
 
-  const canRun = from && to && sourceLocationId && destLocationId && !runMutation.isPending;
+  const canRun = from && to && sourceLocationId && destLocationIds.length > 0 && !runMutation.isPending;
 
   return (
     <BlockStack gap="400">
@@ -773,16 +868,17 @@ function ReplenishmentReport() {
             label="Source" labelInline placeholder="Pull from…"
             options={locationOptions} value={sourceLocationId} onChange={setSourceLocationId}
           />
-          <Select
-            label="Destination" labelInline placeholder="Top up…"
-            options={locationOptions} value={destLocationId} onChange={setDestLocationId}
-          />
           <Button onClick={handleRun} disabled={!canRun} loading={runMutation.isPending} variant="primary">
             Run report
           </Button>
           <Button onClick={openScheduleModal}>Schedule…</Button>
         </InlineStack>
       </InlineStack>
+
+      <DestPicker
+        locations={locations} sourceId={sourceLocationId}
+        value={destLocationIds} onChange={setDestLocationIds}
+      />
 
       <InlineStack gap="200" blockAlign="center" wrap>
         <Text as="span" tone="subdued">Filters</Text>
@@ -841,7 +937,7 @@ function ReplenishmentReport() {
                 Sales between {report.fromDate.slice(0, 10)} – {report.toDate.slice(0, 10)}
               </Text>
               <Text as="span" tone="subdued">
-                {locationsById[report.sourceLocationId] || report.sourceLocationId} → {locationsById[report.destLocationId] || report.destLocationId}
+                {destName(report.sourceLocationId)} → {destIds.map(destName).join(', ')}
               </Text>
               {(report.vendor || report.productType || report.salesChannel || report.posLocationId) && (
                 <Text as="span" tone="subdued">
@@ -862,24 +958,74 @@ function ReplenishmentReport() {
                 onChange={(checked) => { setOnlyNeeding(checked); setPage(0); }}
               />
               <Button onClick={handleExportCsv} disabled={allLineItems.length === 0}>Export CSV</Button>
-              <Button onClick={handleExportTransferCsv} disabled={!allLineItems.some((li) => li.replQty > 0)}>
-                Export Transfer CSV
-              </Button>
+              {destIds.map((id) => (
+                <Button key={id} onClick={() => handleExportTransferCsv(id)} disabled={!allLineItems.some((li) => li.perDest[id]?.replQty > 0)}>
+                  {multi ? `Transfer CSV: ${destName(id)}` : 'Export Transfer CSV'}
+                </Button>
+              ))}
             </InlineStack>
           </InlineStack>
-          {rows.length === 0 ? (
+          {pagedLineItems.length === 0 ? (
             <EmptyState heading="No line items match" image="" />
           ) : (
             <BlockStack gap="200">
-              <DataTable
-                columnContentTypes={['text', 'text', 'text', 'text', 'text', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric']}
-                headings={headings}
-                rows={rows}
-                sortable={[true, true, true, true, true, true, true, true, true, true]}
-                defaultSortDirection="descending"
-                initialSortColumnIndex={sortIndex}
-                onSort={handleSort}
-              />
+              {/* Plain table: Polaris DataTable has no grouped (two-row) header, which is
+                  what separates each destination store's columns. */}
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--p-font-size-325)' }}>
+                  <thead>
+                    <tr>
+                      {groupBands.map((b) => (
+                        <th
+                          key={b.start} colSpan={b.span}
+                          style={{
+                            textAlign: 'center', padding: '8px 12px',
+                            background: b.group ? 'var(--p-color-bg-surface-secondary)' : undefined,
+                            borderBottom: b.group ? '1px solid var(--p-color-border)' : undefined,
+                            borderLeft: b.group ? '1px solid var(--p-color-border)' : undefined,
+                          }}
+                        >
+                          {b.label}
+                        </th>
+                      ))}
+                    </tr>
+                    <tr>
+                      {columns.map((c, i) => (
+                        <th
+                          key={c.key}
+                          onClick={() => {
+                            handleSort(i, c.key === activeSortKey && sortDirection === 'descending' ? 'ascending' : 'descending');
+                          }}
+                          style={{
+                            cursor: 'pointer', whiteSpace: 'nowrap', padding: '8px 12px', userSelect: 'none',
+                            textAlign: c.numeric ? 'right' : 'left', fontWeight: 600,
+                            borderBottom: '1px solid var(--p-color-border)', borderLeft: groupBorder(i),
+                          }}
+                        >
+                          {c.heading}{c.key === activeSortKey ? (sortDirection === 'descending' ? ' ▼' : ' ▲') : ''}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagedLineItems.map((li) => (
+                      <tr key={li.shopifyVariantId}>
+                        {columns.map((c, i) => (
+                          <td
+                            key={c.key}
+                            style={{
+                              padding: '8px 12px', textAlign: c.numeric ? 'right' : 'left',
+                              borderBottom: '1px solid var(--p-color-border-secondary)', borderLeft: groupBorder(i),
+                            }}
+                          >
+                            {renderCell(li, c)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               {pageCount > 1 && (
                 <Box paddingBlockStart="200">
                   <InlineStack align="center">
@@ -925,10 +1071,10 @@ function ReplenishmentReport() {
                 options={locationOptions} value={scheduleForm.sourceLocationId}
                 onChange={(v) => setScheduleForm((f) => ({ ...f, sourceLocationId: v }))}
               />
-              <Select
-                label="Destination location (top up to Max Qty)" placeholder="Select a location"
-                options={locationOptions} value={scheduleForm.destLocationId}
-                onChange={(v) => setScheduleForm((f) => ({ ...f, destLocationId: v }))}
+              <DestPicker
+                locations={locations} sourceId={scheduleForm.sourceLocationId}
+                value={scheduleForm.destLocationIds}
+                onChange={(v) => setScheduleForm((f) => ({ ...f, destLocationIds: v }))}
               />
             </BlockStack>
           </Modal.Section>
