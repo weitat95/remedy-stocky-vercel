@@ -9,6 +9,7 @@ import { SearchIcon, ExternalIcon, ChevronDownIcon, ChevronUpIcon } from '@shopi
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getProducts, importVariantMeta, exportProducts } from '../../api/products.js';
 import { getLocations } from '../../api/inventory.js';
+import { getVendors } from '../../api/vendors.js';
 import { downloadCSVFile } from '../../utils/csv.js';
 
 const VISIBLE_LOCATIONS_STORAGE_KEY = 'productsVisibleLocationIds';
@@ -47,6 +48,9 @@ export default function Products() {
   const [searchDraft, setSearchDraft] = useState('');
   const [search, setSearch] = useState('');
   const [searchBy, setSearchBy] = useState('title');
+  const [vendorFilter, setVendorFilter] = useState('');
+  const { data: vendorsData } = useQuery({ queryKey: ['vendors', { includeHidden: true }], queryFn: () => getVendors({ includeHidden: true }) });
+  const vendorOptions = [{ label: 'All vendors', value: '' }, ...(vendorsData || []).map((v) => ({ label: v.name, value: v.name }))];
 
   const handleSearch = useCallback(() => {
     setCursorStack([]);
@@ -54,6 +58,13 @@ export default function Products() {
     setClientPage(0);
     setSearch(searchDraft.trim());
   }, [searchDraft]);
+
+  const handleVendorChange = useCallback((v) => {
+    setVendorFilter(v);
+    setCursorStack([]);
+    setCursor(null);
+    setClientPage(0);
+  }, []);
 
   const handleSearchClear = useCallback(() => {
     setSearchDraft('');
@@ -118,8 +129,8 @@ export default function Products() {
 
   // ── Query ─────────────────────────────────────────────────────────────────
   const queryKey = isSorting
-    ? ['products', tab, search, searchBy, 'sort', sortLocationId, sortDir]
-    : ['products', tab, search, searchBy, cursor];
+    ? ['products', tab, search, searchBy, vendorFilter, 'sort', sortLocationId, sortDir]
+    : ['products', tab, search, searchBy, vendorFilter, cursor];
   const { data, isLoading, error } = useQuery({
     queryKey,
     queryFn: () => getProducts({
@@ -127,6 +138,7 @@ export default function Products() {
       after: isSorting ? undefined : (cursor || undefined),
       search: search || undefined,
       searchBy: search ? searchBy : undefined,
+      vendor: vendorFilter || undefined,
       tab,
       sortLocationId: sortLocationId || undefined,
       sortDir: isSorting ? sortDir : undefined,
@@ -253,6 +265,7 @@ export default function Products() {
       : exportProducts({
           search: search || undefined,
           searchBy: search ? searchBy : undefined,
+          vendor: vendorFilter || undefined,
           tab,
         })
     ),
@@ -380,6 +393,9 @@ export default function Products() {
                   />
                 </div>
                 <Button onClick={handleSearch}>Search</Button>
+                <div style={{ width: 200 }}>
+                  <Select label="Vendor" labelHidden options={vendorOptions} value={vendorFilter} onChange={handleVendorChange} />
+                </div>
               </InlineStack>
             </Box>
 

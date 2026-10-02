@@ -7,6 +7,7 @@ import { SearchIcon } from '@shopify/polaris-icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getProducts, importVariantLocationMaxStock } from '../../api/products.js';
 import { getLocations } from '../../api/inventory.js';
+import { getVendors } from '../../api/vendors.js';
 import { parseCSV, downloadCSVFile } from '../../utils/csv.js';
 import SkuMatchModal from '../../components/SkuMatchModal.jsx';
 import ArchivedSkuModal from '../../components/ArchivedSkuModal.jsx';
@@ -116,6 +117,9 @@ export default function MaxQuantity() {
   const [searchDraft, setSearchDraft] = useState('');
   const [search, setSearch] = useState('');
   const [searchBy, setSearchBy] = useState('title');
+  const [vendorFilter, setVendorFilter] = useState('');
+  const { data: vendorsData } = useQuery({ queryKey: ['vendors', { includeHidden: true }], queryFn: () => getVendors({ includeHidden: true }) });
+  const vendorOptions = [{ label: 'All vendors', value: '' }, ...(vendorsData || []).map((v) => ({ label: v.name, value: v.name }))];
 
   // ── Pagination (same cursor-stack pattern as Products.jsx) ──────────────────
   const [cursorStack, setCursorStack] = useState([]);
@@ -151,12 +155,13 @@ export default function MaxQuantity() {
   // Shares the 'products' query key prefix with Products.jsx so a save/import
   // here (or there) invalidates both pages' cached data.
   const { data, isLoading, error } = useQuery({
-    queryKey: ['products', 'max-quantity', search, searchBy, cursor],
+    queryKey: ['products', 'max-quantity', search, searchBy, vendorFilter, cursor],
     queryFn: () => getProducts({
       first: 50,
       after: cursor || undefined,
       search: search || undefined,
       searchBy: search ? searchBy : undefined,
+      vendor: vendorFilter || undefined,
     }),
   });
 
@@ -403,6 +408,10 @@ export default function MaxQuantity() {
               />
             </div>
             <Select label="Search by" labelInline options={SEARCH_BY_OPTIONS} value={searchBy} onChange={setSearchBy} />
+            <Select
+              label="Vendor" labelInline options={vendorOptions} value={vendorFilter}
+              onChange={(v) => { setVendorFilter(v); resetPaging(); }}
+            />
           </InlineStack>
 
           {error && <Banner tone="critical">{error.message}</Banner>}
