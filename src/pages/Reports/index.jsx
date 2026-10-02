@@ -541,6 +541,11 @@ const SALES_CHANNEL_OPTIONS = [
 const channelsLabel = (csv) => String(csv).split(',')
   .map((v) => SALES_CHANNEL_OPTIONS.find((o) => o.value === v)?.label || v).join(', ');
 
+// "Inventory as at" stamp, always store-local (not the viewer's browser timezone).
+const inventoryAsAt = (iso) => new Date(iso).toLocaleString('en-GB', {
+  timeZone: 'Asia/Kuala_Lumpur', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
+});
+
 // Filesystem/URL-safe stamp for filenames — e.g. "2026-09-29_0300".
 function compactTimestamp(iso) {
   const d = new Date(iso);
@@ -719,7 +724,8 @@ function ReplenishmentReport() {
     downloadCSVFile(
       `replenishment_${report.fromDate.slice(0, 10)}_to_${report.toDate.slice(0, 10)}_generated-${stamp}.csv`,
       [
-        ['Generated at', new Date(report.generatedAt).toLocaleString()],
+        ['Inventory as at', inventoryAsAt(report.generatedAt)],
+        ['Sales between', `${report.fromDate.slice(0, 10)} – ${report.toDate.slice(0, 10)}`],
         ['Source location', locationsById[report.sourceLocationId] || report.sourceLocationId],
         ['Destination location', locationsById[report.destLocationId] || report.destLocationId],
         ...(report.vendor ? [['Vendor filter', report.vendor]] : []),
@@ -828,8 +834,11 @@ function ReplenishmentReport() {
           <InlineStack align="space-between" blockAlign="center" wrap>
             <BlockStack gap="050">
               <Text as="span" tone="subdued">
-                Sales {report.fromDate.slice(0, 10)} – {report.toDate.slice(0, 10)} · Generated {new Date(report.generatedAt).toLocaleString()}
+                Inventory as at {inventoryAsAt(report.generatedAt)}
                 {report.triggeredBy === 'cron' ? ' (scheduled)' : ' (manual)'}
+              </Text>
+              <Text as="span" tone="subdued">
+                Sales between {report.fromDate.slice(0, 10)} – {report.toDate.slice(0, 10)}
               </Text>
               <Text as="span" tone="subdued">
                 {locationsById[report.sourceLocationId] || report.sourceLocationId} → {locationsById[report.destLocationId] || report.destLocationId}
