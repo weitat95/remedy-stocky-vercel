@@ -10,7 +10,7 @@ const UNASSIGNED = '';
 
 // shopName is not in the form — it's derived server-side from the assigned
 // Shopify location (or the deviceId when unassigned).
-const emptyForm = { deviceId: '', apiKey: '', locationId: UNASSIGNED, isActive: true };
+const emptyForm = { deviceId: '', apiKey: '', locationId: UNASSIGNED, isActive: true, watchdogEnabled: false };
 
 // 24 random bytes (192 bits) as hex — plenty of entropy for a device credential,
 // generated client-side via the Web Crypto API rather than Math.random().
@@ -51,6 +51,7 @@ export default function Devices() {
       apiKey: d.apiKey,
       locationId: d.locationId || UNASSIGNED,
       isActive: d.isActive,
+      watchdogEnabled: !!d.watchdogEnabled,
     });
     setCurrentShopName(d.shopName);
     setFormError(null);
@@ -66,6 +67,7 @@ export default function Devices() {
         apiKey: form.apiKey.trim(),
         locationId: form.locationId || null,
         isActive: form.isActive,
+        watchdogEnabled: form.watchdogEnabled,
       };
       return editingId ? updateDevice(editingId, payload) : createDevice(payload);
     },
@@ -219,6 +221,12 @@ export default function Devices() {
               value={form.locationId}
               onChange={setField('locationId')}
               helpText={`Its foot traffic joins to this location's daily sales in the conversion report. Sets the shop name to “${resultingShopName}”.`}
+            />
+            <Checkbox
+              label="Alert if offline > 2h"
+              checked={form.watchdogEnabled}
+              onChange={setField('watchdogEnabled')}
+              helpText="Sends an alert when this device makes no request for over 2 hours. Off by default."
             />
             <Checkbox
               label="Active"
