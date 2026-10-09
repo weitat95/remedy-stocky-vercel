@@ -25,7 +25,7 @@ function splitCSVRow(line) {
  * Parse CSV text into an array of objects keyed by lowercase header names.
  */
 export function parseCSV(text) {
-  const lines = text.trim().split(/\r?\n/);
+  const lines = text.replace(/^﻿/, '').trim().split(/\r?\n/);
   if (lines.length < 2) return [];
   const headers = splitCSVRow(lines[0]).map((h) => h.toLowerCase());
   return lines
@@ -42,7 +42,8 @@ export function parseCSV(text) {
  */
 export function downloadCSVFile(filename, rows) {
   const csv = rows.map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
+  // UTF-8 BOM so Excel doesn't read the file as ANSI and garble characters like – and —
+  const blob = new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

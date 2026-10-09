@@ -15,6 +15,7 @@ import {
 import { getLocations } from '../../api/inventory.js';
 import { getVendors } from '../../api/vendors.js';
 import { downloadCSVFile } from '../../utils/csv.js';
+import { downloadReplenishmentXlsx } from '../../utils/replenishmentXlsx.js';
 
 const FOOT_TRAFFIC_PAGE_SIZE = 50;
 const HIGHLIGHT_DEFAULTS_KEY = 'footTrafficHighlightDefaults';
@@ -535,6 +536,29 @@ function normalizeLineItem(li, destIds) {
   return { ...li, perDest, endStock, replTotal, needsRepl: repls.some((r) => r > 0) };
 }
 
+// Fixed-width label column so label/value rows line up down the page.
+const LABEL_WIDTH = '230px';
+
+// Form row: subdued label, control(s) to its right.
+function FormRow({ label, children }) {
+  return (
+    <InlineStack gap="300" blockAlign="center" wrap>
+      <Box minWidth={LABEL_WIDTH}><Text as="span" tone="subdued">{label}</Text></Box>
+      {children}
+    </InlineStack>
+  );
+}
+
+// Read-only row: subdued label, full-contrast value.
+function InfoRow({ label, children }) {
+  return (
+    <InlineStack gap="300" blockAlign="start" wrap={false}>
+      <Box minWidth={LABEL_WIDTH}><Text as="span" tone="subdued">{label}</Text></Box>
+      <Text as="span" fontWeight="medium">{children}</Text>
+    </InlineStack>
+  );
+}
+
 // Ordered multi-select of destination stores. Selection order matters: it's the
 // tiebreak for odd units when the source qty is split between stores.
 function DestPicker({ locations, sourceId, value, onChange }) {
@@ -546,27 +570,30 @@ function DestPicker({ locations, sourceId, value, onChange }) {
     onChange(next);
   };
   return (
-    <BlockStack gap="100">
-      <InlineStack gap="300" blockAlign="center" wrap>
-        <Text as="span" tone="subdued">Destinations:</Text>
-        {options.map((l) => (
-          <Checkbox
-            key={l.id} label={l.name} checked={value.includes(l.id)}
-            onChange={(on) => onChange(on ? [...value, l.id] : value.filter((v) => v !== l.id))}
-          />
-        ))}
-      </InlineStack>
-      {value.length > 1 && (
-        <InlineStack gap="200" blockAlign="center" wrap>
-          <Text as="span" tone="subdued">Allocation order (source stock is split equally; extra units go to the first):</Text>
-          {value.map((id, i) => (
-            <InlineStack key={id} gap="050" blockAlign="center" wrap={false}>
-              <Text as="span">{i + 1}. {nameOf(id)}</Text>
-              <Button variant="plain" disabled={i === 0} onClick={() => move(i, -1)} accessibilityLabel={`Move ${nameOf(id)} earlier`}>↑</Button>
-              <Button variant="plain" disabled={i === value.length - 1} onClick={() => move(i, 1)} accessibilityLabel={`Move ${nameOf(id)} later`}>↓</Button>
-            </InlineStack>
+    <BlockStack gap="200">
+      <FormRow label="Replenishment Location To:">
+        <InlineStack gap="300" blockAlign="center" wrap>
+          {options.map((l) => (
+            <Checkbox
+              key={l.id} label={l.name} checked={value.includes(l.id)}
+              onChange={(on) => onChange(on ? [...value, l.id] : value.filter((v) => v !== l.id))}
+            />
           ))}
         </InlineStack>
+      </FormRow>
+      {value.length > 1 && (
+        <FormRow label="Allocation order:">
+          <InlineStack gap="300" blockAlign="center" wrap>
+            {value.map((id, i) => (
+              <InlineStack key={id} gap="050" blockAlign="center" wrap={false}>
+                <Text as="span">{i + 1}. {nameOf(id)}</Text>
+                <Button variant="plain" disabled={i === 0} onClick={() => move(i, -1)} accessibilityLabel={`Move ${nameOf(id)} earlier`}>↑</Button>
+                <Button variant="plain" disabled={i === value.length - 1} onClick={() => move(i, 1)} accessibilityLabel={`Move ${nameOf(id)} later`}>↓</Button>
+              </InlineStack>
+            ))}
+            <Text as="span" tone="subdued">Source stock is split equally; extra units go to the first.</Text>
+          </InlineStack>
+        </FormRow>
       )}
     </BlockStack>
   );
@@ -629,8 +656,6 @@ function ReplenishmentReport() {
   const [destLocationIds, setDestLocationIds] = useState([]);
   const [vendorFilter, setVendorFilter] = useState('');
   const [productTypeFilter, setProductTypeFilter] = useState('');
-  const [salesChannelFilter, setSalesChannelFilter] = useState([]);
-  const [posLocationFilter, setPosLocationFilter] = useState('');
   const [seededFromSettings, setSeededFromSettings] = useState(false);
   const [activeReportId, setActiveReportId] = useState(null);
   const [seededFromHistory, setSeededFromHistory] = useState(false);
@@ -661,7 +686,6 @@ function ReplenishmentReport() {
 
   const locations = locationsData?.data || [];
   const locationOptions = locations.map((l) => ({ label: l.name, value: l.id }));
-  const posLocationOptions = [{ label: 'All locations', value: '' }, ...locationOptions];
   const locationsById = Object.fromEntries(locations.map((l) => [l.id, l.name]));
   const vendorOptions = [
     { label: 'All vendors', value: '' },
@@ -728,10 +752,8 @@ function ReplenishmentReport() {
       from, to, sourceLocationId, destLocationIds,
       vendor: vendorFilter || undefined,
       productType: productTypeFilter.trim() || undefined,
-      salesChannel: salesChannelFilter.length ? salesChannelFilter : undefined,
-      posLocationId: posLocationFilter || undefined,
     });
-  }, [runMutation, from, to, sourceLocationId, destLocationIds, vendorFilter, productTypeFilter, salesChannelFilter, posLocationFilter]);
+  }, [runMutation, from, to, sourceLocationId, destLocationIds, vendorFilter, productTypeFilter]);
 
   const handleSaveSchedule = useCallback(() => {
     settingsMutation.mutate(scheduleForm);
@@ -752,7 +774,7 @@ function ReplenishmentReport() {
     { key: 'sku', heading: 'SKU', get: (li) => li.sku },
     { key: 'productTitle', heading: 'Product', get: (li) => li.productTitle },
     { key: 'variantTitle', heading: 'Variant', get: (li) => li.variantTitle },
-    { key: 'sourceQty', heading: 'Source Qty', numeric: true, get: (li) => li.sourceQty },
+    { key: 'sourceQty', heading: 'Op. Bal', numeric: true, get: (li) => li.sourceQty },
     { key: 'soldQty', heading: multi ? 'Sold Qty (total)' : 'Sold Qty', numeric: true, get: (li) => li.soldQty },
     ...destIds.flatMap((id) => {
       // `group` drives the upper header band + left border (and the CSV's group row).
@@ -766,7 +788,7 @@ function ReplenishmentReport() {
     }),
     // Same summary group regardless of store count, so the layout doesn't shift.
     { group: 'summary', groupLabel: multi ? 'All stores' : 'Source', key: 'replTotal', heading: 'Total REPL', numeric: true, repl: true, get: (li) => li.replTotal },
-    { group: 'summary', groupLabel: multi ? 'All stores' : 'Source', key: 'endStock', heading: 'End Stock (source)', numeric: true, get: (li) => li.endStock },
+    { group: 'summary', groupLabel: multi ? 'All stores' : 'Source', key: 'endStock', heading: 'Cl. Bal', numeric: true, get: (li) => li.endStock },
   ];
   // Contiguous runs of columns sharing a group -> one band cell each (colSpan).
   const groupBands = [];
@@ -818,7 +840,7 @@ function ReplenishmentReport() {
       `replenishment_${report.fromDate.slice(0, 10)}_to_${report.toDate.slice(0, 10)}_generated-${stamp}.csv`,
       [
         ['Inventory as at', inventoryAsAt(report.generatedAt)],
-        ['Sales between', `${report.fromDate.slice(0, 10)} – ${report.toDate.slice(0, 10)}`],
+        ['Sales Period', `${report.fromDate.slice(0, 10)} – ${report.toDate.slice(0, 10)}`],
         ['Source location', locationsById[report.sourceLocationId] || report.sourceLocationId],
         [multi ? 'Destination locations (allocation order)' : 'Destination location', destIds.map(destName).join(', ')],
         ...(report.vendor ? [['Vendor filter', report.vendor]] : []),
@@ -832,6 +854,32 @@ function ReplenishmentReport() {
       ]
     );
   }, [report, sortedLineItems, locationsById]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleExportXlsx = async () => {
+    if (!report) return;
+    const stamp = compactTimestamp(report.generatedAt);
+    const filters = [
+      report.vendor && `Vendor: ${report.vendor}`,
+      report.productType && `Product Type: ${report.productType}`,
+      report.salesChannel && `Channel: ${channelsLabel(report.salesChannel)}`,
+      report.posLocationId && `POS Location: ${locationsById[report.posLocationId] || report.posLocationId}`,
+    ].filter(Boolean);
+    const range = `${report.fromDate.slice(0, 10)}_to_${report.toDate.slice(0, 10)}`;
+    await downloadReplenishmentXlsx({
+      filename: `replenishment_${range}_generated-${stamp}.xlsx`,
+      sheetTitle: `replenishment_${range}`,
+      meta: [
+        ['Inventory as at', inventoryAsAt(report.generatedAt)],
+        ['Sales Period', `${report.fromDate.slice(0, 10)} – ${report.toDate.slice(0, 10)}`],
+        ['Replenishment From:', destName(report.sourceLocationId)],
+        ['Replenishment To:', destIds.map(destName).join(', ')],
+        ...(filters.length ? [['Filters:', filters.join(' · ')]] : []),
+      ],
+      dests: destIds.map((id) => ({ id, name: destName(id) })),
+      summaryLabel: multi ? 'All stores' : 'Source',
+      lineItems: sortedLineItems,
+    });
+  };
 
   // One transfer file per destination — Transfers/index.jsx imports a single from/to pair.
   const handleExportTransferCsv = (destId) => {
@@ -856,18 +904,6 @@ function ReplenishmentReport() {
       <InlineStack align="space-between" blockAlign="center" wrap>
         <Text variant="headingMd">Replenishment</Text>
         <InlineStack gap="200" blockAlign="center" wrap>
-          <InlineStack gap="100" blockAlign="center" wrap={false}>
-            <Text as="span" tone="subdued">From</Text>
-            <TextField labelHidden label="From" type="date" value={from} onChange={setFrom} autoComplete="off" />
-          </InlineStack>
-          <InlineStack gap="100" blockAlign="center" wrap={false}>
-            <Text as="span" tone="subdued">To</Text>
-            <TextField labelHidden label="To" type="date" value={to} onChange={setTo} autoComplete="off" />
-          </InlineStack>
-          <Select
-            label="Source" labelInline placeholder="Pull from…"
-            options={locationOptions} value={sourceLocationId} onChange={setSourceLocationId}
-          />
           <Button onClick={handleRun} disabled={!canRun} loading={runMutation.isPending} variant="primary">
             Run report
           </Button>
@@ -875,36 +911,41 @@ function ReplenishmentReport() {
         </InlineStack>
       </InlineStack>
 
-      <DestPicker
-        locations={locations} sourceId={sourceLocationId}
-        value={destLocationIds} onChange={setDestLocationIds}
-      />
-
-      <InlineStack gap="200" blockAlign="center" wrap>
-        <Text as="span" tone="subdued">Filters</Text>
-        <Select label="Vendor" labelInline options={vendorOptions} value={vendorFilter} onChange={setVendorFilter} />
-        <TextField
-          label="Product Type" labelHidden placeholder="Product Type"
-          value={productTypeFilter} onChange={setProductTypeFilter} autoComplete="off"
+      <BlockStack gap="200">
+        <FormRow label="Sales Period:">
+          <InlineStack gap="200" blockAlign="center" wrap>
+            <Text as="span" tone="subdued">From:</Text>
+            <TextField labelHidden label="Sales Period From" type="date" value={from} onChange={setFrom} autoComplete="off" />
+            <Text as="span" tone="subdued">To:</Text>
+            <TextField labelHidden label="Sales Period To" type="date" value={to} onChange={setTo} autoComplete="off" />
+          </InlineStack>
+        </FormRow>
+        <FormRow label="Replenishment Location From:">
+          <Select
+            label="Replenishment Location From" labelHidden placeholder="Pull from…"
+            options={locationOptions} value={sourceLocationId}
+            onChange={(v) => {
+              setSourceLocationId(v);
+              // A store can't be both source and destination.
+              setDestLocationIds((ids) => ids.filter((id) => id !== v));
+            }}
+          />
+        </FormRow>
+        <DestPicker
+          locations={locations} sourceId={sourceLocationId}
+          value={destLocationIds} onChange={setDestLocationIds}
         />
-        <InlineStack gap="300" blockAlign="center">
-          <Text as="span" tone="subdued">Sales Channel:</Text>
-          {SALES_CHANNEL_OPTIONS.map((o) => (
-            <Checkbox
-              key={o.value} label={o.label}
-              checked={salesChannelFilter.includes(o.value)}
-              onChange={(on) => setSalesChannelFilter((prev) => (on ? [...prev, o.value] : prev.filter((v) => v !== o.value)))}
-            />
-          ))}
-        </InlineStack>
-        <Select
-          label="POS Location" labelInline options={posLocationOptions}
-          value={posLocationFilter} onChange={setPosLocationFilter}
-        />
-      </InlineStack>
-      <Text as="span" tone="subdued">
-        Vendor and Product Type narrow which rows appear. Sales Channel and POS Location narrow Sold Qty only (and, like the date range, which variants qualify for a row at all).
-      </Text>
+        <FormRow label="Vendor:">
+          <Select label="Vendor" labelHidden options={vendorOptions} value={vendorFilter} onChange={setVendorFilter} />
+        </FormRow>
+        <FormRow label="Product Type:">
+          <TextField
+            label="Product Type" labelHidden placeholder="All product types"
+            value={productTypeFilter} onChange={setProductTypeFilter} autoComplete="off"
+          />
+        </FormRow>
+        <Text as="span" tone="subdued">Vendor and Product Type narrow which rows appear.</Text>
+      </BlockStack>
 
       {runMutation.error && <Banner tone="critical">{runMutation.error.message}</Banner>}
 
@@ -928,27 +969,24 @@ function ReplenishmentReport() {
       ) : report && (
         <BlockStack gap="300">
           <InlineStack align="space-between" blockAlign="center" wrap>
-            <BlockStack gap="050">
-              <Text as="span" tone="subdued">
-                Inventory as at {inventoryAsAt(report.generatedAt)}
-                {report.triggeredBy === 'cron' ? ' (scheduled)' : ' (manual)'}
-              </Text>
-              <Text as="span" tone="subdued">
-                Sales between {report.fromDate.slice(0, 10)} – {report.toDate.slice(0, 10)}
-              </Text>
-              <Text as="span" tone="subdued">
-                {destName(report.sourceLocationId)} → {destIds.map(destName).join(', ')}
-              </Text>
+            <BlockStack gap="100">
+              <InfoRow label="Inventory as at:">
+                {inventoryAsAt(report.generatedAt)}{report.triggeredBy === 'cron' ? ' (scheduled)' : ' (manual)'}
+              </InfoRow>
+              <InfoRow label="Sales Period:">
+                {report.fromDate.slice(0, 10)} – {report.toDate.slice(0, 10)}
+              </InfoRow>
+              <InfoRow label="Replenishment Location From:">{destName(report.sourceLocationId)}</InfoRow>
+              <InfoRow label="Replenishment Location To:">{destIds.map(destName).join(', ')}</InfoRow>
               {(report.vendor || report.productType || report.salesChannel || report.posLocationId) && (
-                <Text as="span" tone="subdued">
-                  Filters:{' '}
+                <InfoRow label="Filters:">
                   {[
                     report.vendor && `Vendor: ${report.vendor}`,
                     report.productType && `Product Type: ${report.productType}`,
                     report.salesChannel && `Channel: ${channelsLabel(report.salesChannel)}`,
                     report.posLocationId && `POS Location: ${locationsById[report.posLocationId] || report.posLocationId}`,
                   ].filter(Boolean).join(' · ')}
-                </Text>
+                </InfoRow>
               )}
             </BlockStack>
             <InlineStack gap="200" blockAlign="center">
@@ -958,6 +996,7 @@ function ReplenishmentReport() {
                 onChange={(checked) => { setOnlyNeeding(checked); setPage(0); }}
               />
               <Button onClick={handleExportCsv} disabled={allLineItems.length === 0}>Export CSV</Button>
+              <Button onClick={handleExportXlsx} disabled={allLineItems.length === 0}>Export Excel</Button>
               {destIds.map((id) => (
                 <Button key={id} onClick={() => handleExportTransferCsv(id)} disabled={!allLineItems.some((li) => li.perDest[id]?.replQty > 0)}>
                   {multi ? `Transfer CSV: ${destName(id)}` : 'Export Transfer CSV'}
@@ -1067,9 +1106,9 @@ function ReplenishmentReport() {
                 helpText="Each scheduled run covers this many days up to yesterday (store time)."
               />
               <Select
-                label="Source location (pull from)" placeholder="Select a location"
+                label="Replenishment Location From" placeholder="Select a location"
                 options={locationOptions} value={scheduleForm.sourceLocationId}
-                onChange={(v) => setScheduleForm((f) => ({ ...f, sourceLocationId: v }))}
+                onChange={(v) => setScheduleForm((f) => ({ ...f, sourceLocationId: v, destLocationIds: f.destLocationIds.filter((id) => id !== v) }))}
               />
               <DestPicker
                 locations={locations} sourceId={scheduleForm.sourceLocationId}
