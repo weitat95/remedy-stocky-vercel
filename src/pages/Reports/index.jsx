@@ -1130,7 +1130,7 @@ function ReplenishmentReport() {
           <Modal.Section>
             <DataTable
               columnContentTypes={['text', 'text', 'numeric', 'text', 'text']}
-              headings={['Order', 'Date', 'Quantity', 'Sales Channel', 'POS Location']}
+              headings={['Order', 'Date', 'Quantity', 'Sales Channel', 'Fulfillment Location']}
               rows={(salesDetailItem.salesDetail || []).map((d) => [
                 report?.shopifyAdminBase
                   ? <Link url={`${report.shopifyAdminBase}/orders/${gidToNumericId(d.orderId)}`} external>{d.orderName}</Link>
@@ -1138,7 +1138,7 @@ function ReplenishmentReport() {
                 new Date(d.createdAt).toLocaleString(),
                 d.quantity,
                 channelLabel(d.sourceName),
-                d.locationName || 'Online',
+                d.locationName || '—',
               ])}
             />
           </Modal.Section>
