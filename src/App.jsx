@@ -34,6 +34,8 @@ import PODetail from './pages/PurchaseOrders/PODetail.jsx';
 import Orders from './pages/Orders/index.jsx';
 import Products from './pages/Inventory/Products.jsx';
 import MaxQuantity from './pages/MaxQuantity/index.jsx';
+import VendorRrp from './pages/VendorRrp/index.jsx';
+import VendorMargins from './pages/VendorMargins/index.jsx';
 import Adjustments from './pages/Inventory/Adjustments.jsx';
 import AdjustmentDetail from './pages/Inventory/AdjustmentDetail.jsx';
 import Transfers from './pages/Transfers/index.jsx';
@@ -174,6 +176,20 @@ export default function App() {
             selected: is('/inventory/max-quantity'),
           },
           {
+            label: 'Vendor RRP',
+            icon: MaximizeIcon,
+            url: '/inventory/vendor-rrp',
+            onClick: () => navigate('/inventory/vendor-rrp'),
+            selected: is('/inventory/vendor-rrp'),
+          },
+          {
+            label: 'Vendor Margins',
+            icon: MaximizeIcon,
+            url: '/inventory/vendor-margins',
+            onClick: () => navigate('/inventory/vendor-margins'),
+            selected: is('/inventory/vendor-margins'),
+          },
+          {
             label: 'Adjustments',
             icon: AdjustIcon,
             url: '/inventory/adjustments',
@@ -308,6 +324,8 @@ export default function App() {
         <Route path="/draft-orders" element={<DraftOrders />} />
         <Route path="/inventory/products" element={<Products />} />
         <Route path="/inventory/max-quantity" element={<MaxQuantity />} />
+        <Route path="/inventory/vendor-rrp" element={<VendorRrp />} />
+        <Route path="/inventory/vendor-margins" element={<VendorMargins />} />
         <Route path="/inventory/adjustments" element={<Adjustments />} />
         <Route path="/inventory/adjustments/:id" element={<AdjustmentDetail />} />
         <Route path="/transfers/*" element={<Transfers />} />
