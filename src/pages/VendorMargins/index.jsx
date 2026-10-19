@@ -5,7 +5,7 @@ import {
 } from '@shopify/polaris';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getVendors } from '../../api/vendors.js';
-import { getVendorMargins, saveVendorMargin, deleteVendorMargin } from '../../api/consignment.js';
+import { getVendorMargins, saveVendorMargin, deleteVendorMargin, getTemplates } from '../../api/consignment.js';
 
 const EMPTY_FORM = {
   effectiveFrom: '', active: true, marginType: 'fixed', valueType: 'percent',
@@ -35,6 +35,15 @@ export default function VendorMargins() {
     queryFn: () => getVendorMargins(vendorId),
     enabled: !!vendorId,
   });
+
+  // Tier thresholds are the vendor's total for the template's whole period, so they only
+  // make sense for monthly templates. Warn about this vendor's templates that aren't.
+  const { data: tpl } = useQuery({ queryKey: ['consignment-templates'], queryFn: getTemplates });
+  const hasTiered = rows.some((r) => r.active && r.marginType === 'tiered');
+  const nonMonthly = hasTiered
+    ? (tpl?.data || []).filter((t) => t.vendorId === vendorId && !['current_month', 'last_month'].includes(t.timeFrame))
+    : [];
+  const tfLabel = (v) => tpl?.timeFrames?.find((t) => t.value === v)?.label || v;
 
   const saveMutation = useMutation({
     mutationFn: saveVendorMargin,
@@ -87,6 +96,14 @@ export default function VendorMargins() {
           A report uses the row in force at the <b>start of its period</b>, so regenerating an old month never changes when margins change later.
           Tiered thresholds are the vendor's total sales for the template's reporting period — use them with monthly templates.
         </Banner>
+        {nonMonthly.length > 0 && (
+          <Banner tone="warning" title="Tiered thresholds assume a monthly report">
+            <BlockStack gap="100">
+              <Text as="p">Tier bands are picked from the vendor's total sales over the template's whole reporting period, so a longer or shorter period reaches different bands. These templates for this vendor aren't monthly:</Text>
+              {nonMonthly.map((t) => <Text as="p" key={t.id}>• {t.reportName} — {tfLabel(t.timeFrame)}</Text>)}
+            </BlockStack>
+          </Banner>
+        )}
         <Card padding="0">
           {!vendorId ? (
             <EmptyState heading="Pick a vendor" image=""><p>Choose a vendor to see its margin history.</p></EmptyState>

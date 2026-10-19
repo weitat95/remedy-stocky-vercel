@@ -50,7 +50,42 @@ export async function deleteTemplate(id) {
   return res.data.data;
 }
 
+// Returns { blob, filename }. On failure the error body arrives as a Blob, so unwrap it.
+async function downloadBlobRequest(url, format) {
+  try {
+    const res = await apiClient.post(url, { format }, { responseType: 'blob' });
+    const cd = res.headers['content-disposition'] || '';
+    const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+    const plain = /filename="([^"]+)"/i.exec(cd);
+    return { blob: res.data, filename: star ? decodeURIComponent(star[1]) : plain ? plain[1] : `consignment.${format}` };
+  } catch (err) {
+    if (err.response?.data instanceof Blob) {
+      try { err.message = JSON.parse(await err.response.data.text()).error || err.message; } catch { /* keep message */ }
+    }
+    throw err;
+  }
+}
+
+export async function exportTemplate(id, format) {
+  return downloadBlobRequest(`/consignment/templates/${id}/export`, format);
+}
+
 export async function previewTemplate(id) {
   const res = await apiClient.post(`/consignment/templates/${id}/preview`);
   return res.data.data;
+}
+
+export async function sendTemplateNow(id) {
+  const res = await apiClient.post(`/consignment/templates/${id}/send`);
+  return res.data.data; // the run record: { status: 'sent'|'failed'|'skipped', error, skippedReason, missingRrpSkus, ... }
+}
+
+export async function getTemplateRuns(id) {
+  const res = await apiClient.get(`/consignment/templates/${id}/runs`);
+  return res.data.data;
+}
+
+// Re-download a sent report from its stored snapshot.
+export async function exportRun(id, format) {
+  return downloadBlobRequest(`/consignment/runs/${id}/export`, format);
 }
