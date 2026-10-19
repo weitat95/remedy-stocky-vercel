@@ -51,9 +51,9 @@ export async function deleteTemplate(id) {
 }
 
 // Returns { blob, filename }. On failure the error body arrives as a Blob, so unwrap it.
-async function downloadBlobRequest(url, format) {
+async function downloadBlobRequest(url, format, extra = {}) {
   try {
-    const res = await apiClient.post(url, { format }, { responseType: 'blob' });
+    const res = await apiClient.post(url, { format, ...extra }, { responseType: 'blob' });
     const cd = res.headers['content-disposition'] || '';
     const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
     const plain = /filename="([^"]+)"/i.exec(cd);
@@ -88,4 +88,14 @@ export async function getTemplateRuns(id) {
 // Re-download a sent report from its stored snapshot.
 export async function exportRun(id, format) {
   return downloadBlobRequest(`/consignment/runs/${id}/export`, format);
+}
+
+// Report 2 — Sales by Vendor Monthly. params: { vendorId, month: 'YYYY-MM', locationId? }
+export async function getSalesByVendor(params) {
+  const res = await apiClient.post('/consignment/sales-by-vendor', params);
+  return res.data.data;
+}
+
+export async function exportSalesByVendor(params) {
+  return downloadBlobRequest('/consignment/sales-by-vendor/export', 'xlsx', params);
 }
