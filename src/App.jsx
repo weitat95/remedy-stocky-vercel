@@ -34,6 +34,7 @@ import PODetail from './pages/PurchaseOrders/PODetail.jsx';
 import Orders from './pages/Orders/index.jsx';
 import Products from './pages/Inventory/Products.jsx';
 import MaxQuantity from './pages/MaxQuantity/index.jsx';
+import Consignment from './pages/Consignment/index.jsx';
 import VendorRrp from './pages/VendorRrp/index.jsx';
 import VendorMargins from './pages/VendorMargins/index.jsx';
 import Adjustments from './pages/Inventory/Adjustments.jsx';
@@ -223,6 +224,13 @@ export default function App() {
             selected: is('/reports/best-sellers'),
           },
           {
+            label: 'Consignment',
+            icon: ChartLineIcon,
+            url: '/consignment',
+            onClick: () => navigate('/consignment'),
+            selected: is('/consignment'),
+          },
+          {
             label: 'Foot Traffic',
             icon: PersonIcon,
             url: '/reports/foot-traffic',
@@ -324,6 +332,7 @@ export default function App() {
         <Route path="/draft-orders" element={<DraftOrders />} />
         <Route path="/inventory/products" element={<Products />} />
         <Route path="/inventory/max-quantity" element={<MaxQuantity />} />
+        <Route path="/consignment" element={<Consignment />} />
         <Route path="/inventory/vendor-rrp" element={<VendorRrp />} />
         <Route path="/inventory/vendor-margins" element={<VendorMargins />} />
         <Route path="/inventory/adjustments" element={<Adjustments />} />
