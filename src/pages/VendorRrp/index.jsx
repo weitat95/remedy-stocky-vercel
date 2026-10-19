@@ -31,10 +31,10 @@ async function mapWithConcurrency(items, limit, fn) {
 
 // Label with a hover explanation — this field is easy to confuse with the report margin
 // on the Vendor Margins page.
-const COST_MARGIN_LABEL = (
+const FILL_MARGIN_LABEL = (
   <InlineStack gap="100" blockAlign="center">
     <span>Margin the Shopify costs were based on (%)</span>
-    <Tooltip content="Used only to work out an RRP from a Shopify unit cost: RRP = cost ÷ (1 − margin). That is for “Fill RRP from cost” and the optional cost-derived RRP fallback. It is never used to calculate report margin or payable — that comes from the Vendor Margins page.">
+    <Tooltip content="Used only for this one-off fill: RRP = cost ÷ (1 − margin). It is not saved, and it is not the margin reports use — that comes from the Vendor Margins page.">
       <Icon source={QuestionCircleIcon} tone="subdued" />
     </Tooltip>
   </InlineStack>
@@ -71,29 +71,18 @@ export default function VendorRrp() {
     rrp: v.vendorRrp,
   })), [variants, page]);
 
-  // ── Vendor settings: cost margin + fallback ───────────────────────────────
-  const [marginInput, setMarginInput] = useState(null); // null = untouched
-  const [fallbackInput, setFallbackInput] = useState(null);
-  const savedMarginPct = vendor?.costMargin != null ? String(+(Number(vendor.costMargin) * 100).toFixed(2)) : '';
-  const marginValue = marginInput ?? savedMarginPct;
-  const fallbackValue = fallbackInput ?? !!vendor?.useCostDerivedRrp;
-  const settingsDirty = vendor && (marginValue !== savedMarginPct || fallbackValue !== !!vendor.useCostDerivedRrp);
+  // ── Vendor setting: cost-derived RRP fallback (saved on toggle) ───────────
   const settingsMutation = useMutation({
-    mutationFn: () => updateVendor(vendor.id, {
-      costMargin: marginValue === '' ? null : Number(marginValue),
-      useCostDerivedRrp: fallbackValue,
-    }),
+    mutationFn: (useCostDerivedRrp) => updateVendor(vendor.id, { useCostDerivedRrp }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['vendors'] });
-      setMarginInput(null); setFallbackInput(null);
-      setToast('Vendor settings saved');
+      setToast('Vendor setting saved');
     },
     onError: (err) => setToast(err.message),
   });
 
   const pickVendor = (name) => {
     setVendorName(name); setPage(0); setEdits({});
-    setMarginInput(null); setFallbackInput(null);
   };
 
   // ── Inline edit ───────────────────────────────────────────────────────────
@@ -227,7 +216,7 @@ export default function VendorRrp() {
     onError: (err) => setToast(err.message),
   });
   const openFill = () => {
-    setFillMargin(savedMarginPct); setFillOverwrite(false); setFillPreview(null); setFillOpen(true);
+    setFillMargin(''); setFillOverwrite(false); setFillPreview(null); setFillOpen(true);
   };
   const fillCount = fillPreview ? fillPreview.rows.filter((r) => r.willFill).length : 0;
 
@@ -248,27 +237,13 @@ export default function VendorRrp() {
           <BlockStack gap="300">
             <Select label="Vendor" options={vendorOptions} value={vendorName} onChange={pickVendor} />
             {vendor && (
-              <InlineStack gap="400" blockAlign="end" wrap>
-                <div style={{ width: 220 }}>
-                  <TextField
-                    label={COST_MARGIN_LABEL}
-                    type="number"
-                    value={marginValue}
-                    onChange={setMarginInput}
-                    autoComplete="off"
-                    helpText="Only for working out RRP from cost (cost ÷ (1 − margin)). Not the margin reports use — that's on Vendor Margins."
-                  />
-                </div>
-                <Checkbox
-                  label="Use cost-derived RRP when no RRP is stored"
-                  helpText="RRP = unit cost / (1 − margin). Never falls back to the Shopify price."
-                  checked={fallbackValue}
-                  onChange={setFallbackInput}
-                />
-                <Button onClick={() => settingsMutation.mutate()} disabled={!settingsDirty} loading={settingsMutation.isPending}>
-                  Save settings
-                </Button>
-              </InlineStack>
+              <Checkbox
+                label="Use cost-derived RRP when no RRP is stored"
+                helpText="Reports then use RRP = unit cost ÷ (1 − the vendor's margin on Vendor Margins). Needs a fixed percentage margin. Never falls back to the Shopify price."
+                checked={!!vendor.useCostDerivedRrp}
+                disabled={settingsMutation.isPending}
+                onChange={(v) => settingsMutation.mutate(v)}
+              />
             )}
           </BlockStack>
         </Card>
@@ -376,11 +351,11 @@ export default function VendorRrp() {
         secondaryActions={[{ content: 'Cancel', onAction: () => setFillOpen(false) }]}>
         <Modal.Section>
           <BlockStack gap="300">
-            <Text as="p" tone="subdued">RRP = unit cost ÷ (1 − margin), rounded to 2 decimals. Enter the margin this vendor's current Shopify costs were set with (not the report margin from Vendor Margins). Applying also saves it on the vendor.</Text>
+            <Text as="p" tone="subdued">RRP = unit cost ÷ (1 − margin), rounded to 2 decimals. Enter the margin this vendor's current Shopify costs were set with — it isn't stored, and it isn't the report margin from Vendor Margins.</Text>
             <InlineStack gap="300" blockAlign="end">
               <div style={{ width: 180 }}>
-                <TextField label={COST_MARGIN_LABEL} type="number" value={fillMargin}
-                  onChange={(v) => { setFillMargin(v); setFillPreview(null); }} autoComplete="off" />
+                <TextField label={FILL_MARGIN_LABEL} type="number" value={fillMargin} placeholder="e.g. 30"
+                  onChange={(v) => { setFillMargin(v); setFillPreview(null); }} autoComplete="off" requiredIndicator />
               </div>
               <Checkbox label="Overwrite existing RRPs" checked={fillOverwrite}
                 onChange={(v) => { setFillOverwrite(v); setFillPreview(null); }} />
