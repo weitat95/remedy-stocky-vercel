@@ -51,13 +51,18 @@ function buildRows(report) {
 function PreviewBody({ report, locationName }) {
   const t = report.totals;
   const rows = useMemo(() => buildRows(report), [report]);
+  // Totals of a report with missing RRPs would read as a real zero — show a dash instead.
+  const fig = (v) => (report.calculable ? `RM ${rm(v)}` : '—');
   return (
     <BlockStack gap="400">
       {!report.calculable && (
         <Banner tone="critical" title={`${report.missingRrp.length} SKU(s) have no vendor RRP — this report cannot be sent`}>
           <BlockStack gap="100">
             {report.missingRrp.map((m) => (
-              <Text as="p" key={`${m.sku}-${m.productTitle}-${m.variantTitle}`}>{m.sku || '(no SKU)'} — {m.productTitle}{m.variantTitle ? ` / ${m.variantTitle}` : ''}</Text>
+              <Text as="p" key={`${m.sku}-${m.productTitle}-${m.variantTitle}`}>
+                {m.sku || '(no SKU)'} — {m.productTitle}{m.variantTitle ? ` / ${m.variantTitle}` : ''}
+                {m.reason && <Text as="span" tone="subdued"> · {m.reason}</Text>}
+              </Text>
             ))}
             <Text as="p" tone="subdued">Set them on the Vendor RRP page. Totals below exclude these lines.</Text>
           </BlockStack>
@@ -75,15 +80,15 @@ function PreviewBody({ report, locationName }) {
             {report.period.from} – {report.period.to} · {locationName} · margin in force from {report.setting.effectiveFrom}: {describeMargin(report.setting)} · {report.setting.promoMode === 'include' ? 'promo included' : 'promo excluded'}
           </Text>
           <InlineStack gap="600" wrap>
-            <BlockStack><Text as="span" tone="subdued">Total sales (RRP)</Text><Text as="span" variant="headingMd">RM {rm(t.netSales)}</Text></BlockStack>
-            <BlockStack><Text as="span" tone="subdued">Band reached</Text><Text as="span" variant="headingMd">{report.band ? `≥ RM${report.band.from} → ${report.band.rate}${report.setting.valueType === 'percent' ? '%' : ' RM/unit'}` : 'Fixed'}</Text></BlockStack>
-            <BlockStack><Text as="span" tone="subdued">Margin</Text><Text as="span" variant="headingMd">RM {rm(t.margin)}</Text></BlockStack>
-            <BlockStack><Text as="span" tone="subdued">Payable to vendor</Text><Text as="span" variant="headingMd">RM {rm(t.payable)}</Text></BlockStack>
+            <BlockStack><Text as="span" tone="subdued">Total sales (RRP)</Text><Text as="span" variant="headingMd">{fig(t.netSales)}</Text></BlockStack>
+            <BlockStack><Text as="span" tone="subdued">Band reached</Text><Text as="span" variant="headingMd">{report.band && report.calculable ? `≥ RM${report.band.from} → ${report.band.rate}${report.setting.valueType === 'percent' ? '%' : ' RM/unit'}` : 'Fixed'}</Text></BlockStack>
+            <BlockStack><Text as="span" tone="subdued">Margin</Text><Text as="span" variant="headingMd">{fig(t.margin)}</Text></BlockStack>
+            <BlockStack><Text as="span" tone="subdued">Payable to vendor</Text><Text as="span" variant="headingMd">{fig(t.payable)}</Text></BlockStack>
           </InlineStack>
-          {report.band && <Text as="p" tone="subdued">Band is picked from the vendor-wide total of RM {rm(report.vendorTotalSales)} across all locations{report.provisional ? ' (month-to-date)' : ''}.</Text>}
+          {report.band && report.calculable && <Text as="p" tone="subdued">Band is picked from the vendor-wide total of RM {rm(report.vendorTotalSales)} across all locations{report.provisional ? ' (month-to-date)' : ''}.</Text>}
         </BlockStack>
       </Card>
-      {report.zeroSales ? (
+      {!report.calculable && !report.lines.length ? null : report.zeroSales ? (
         <Banner tone="info">No sales for this period.</Banner>
       ) : (
         <Card padding="0">

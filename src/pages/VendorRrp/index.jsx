@@ -1,8 +1,9 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   Page, Card, IndexTable, Text, Button, Banner, Spinner, Pagination, Box, Badge,
-  TextField, Select, InlineStack, BlockStack, Modal, Toast, EmptyState, Checkbox,
+  TextField, Select, InlineStack, BlockStack, Modal, Toast, EmptyState, Checkbox, Tooltip, Icon,
 } from '@shopify/polaris';
+import { QuestionCircleIcon } from '@shopify/polaris-icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getProducts, importVariantMeta } from '../../api/products.js';
 import { getVendors, updateVendor } from '../../api/vendors.js';
@@ -27,6 +28,17 @@ async function mapWithConcurrency(items, limit, fn) {
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return results;
 }
+
+// Label with a hover explanation — this field is easy to confuse with the report margin
+// on the Vendor Margins page.
+const COST_MARGIN_LABEL = (
+  <InlineStack gap="100" blockAlign="center">
+    <span>Margin the Shopify costs were based on (%)</span>
+    <Tooltip content="Used only to work out an RRP from a Shopify unit cost: RRP = cost ÷ (1 − margin). That is for “Fill RRP from cost” and the optional cost-derived RRP fallback. It is never used to calculate report margin or payable — that comes from the Vendor Margins page.">
+      <Icon source={QuestionCircleIcon} tone="subdued" />
+    </Tooltip>
+  </InlineStack>
+);
 
 const money = (n) => (n == null ? '—' : Number(n).toFixed(2));
 
@@ -239,12 +251,12 @@ export default function VendorRrp() {
               <InlineStack gap="400" blockAlign="end" wrap>
                 <div style={{ width: 220 }}>
                   <TextField
-                    label="Margin used for costs (%)"
+                    label={COST_MARGIN_LABEL}
                     type="number"
                     value={marginValue}
                     onChange={setMarginInput}
                     autoComplete="off"
-                    helpText="The margin this vendor's Shopify unit costs were set with."
+                    helpText="Only for working out RRP from cost (cost ÷ (1 − margin)). Not the margin reports use — that's on Vendor Margins."
                   />
                 </div>
                 <Checkbox
@@ -364,10 +376,10 @@ export default function VendorRrp() {
         secondaryActions={[{ content: 'Cancel', onAction: () => setFillOpen(false) }]}>
         <Modal.Section>
           <BlockStack gap="300">
-            <Text as="p" tone="subdued">RRP = unit cost ÷ (1 − margin), rounded to 2 decimals. Enter the margin this vendor's current costs were set with. Applying also saves it as the vendor's cost margin.</Text>
+            <Text as="p" tone="subdued">RRP = unit cost ÷ (1 − margin), rounded to 2 decimals. Enter the margin this vendor's current Shopify costs were set with (not the report margin from Vendor Margins). Applying also saves it on the vendor.</Text>
             <InlineStack gap="300" blockAlign="end">
               <div style={{ width: 180 }}>
-                <TextField label="Margin used for costs (%)" type="number" value={fillMargin}
+                <TextField label={COST_MARGIN_LABEL} type="number" value={fillMargin}
                   onChange={(v) => { setFillMargin(v); setFillPreview(null); }} autoComplete="off" />
               </div>
               <Checkbox label="Overwrite existing RRPs" checked={fillOverwrite}
