@@ -28,23 +28,24 @@ function buildRows(report) {
   }
   const bold = (v) => <Text as="span" fontWeight="semibold">{v}</Text>;
   const blank = (n) => Array(n).fill('');
+  const COLS = 12;
   for (const [loc, lines] of groups) {
-    rows.push([bold(loc), ...blank(10)]);
+    rows.push([bold(loc), ...blank(COLS - 1)]);
     let q = 0; let n = 0; let m = 0; let p = 0;
     for (const l of lines) {
       q += l.quantity; n += l.netSales; m += l.margin; p += l.payable;
       rows.push([
-        l.orderDate, l.orderName, l.productTitle, l.variantTitle, l.sku || '—',
+        l.orderDate, l.orderName, l.locationName, l.vendor, l.productTitle, l.variantTitle, l.sku || '—',
         <>{rm(l.rrp)}{l.rrpDerived && <> <Badge tone="attention">from cost</Badge></>}</>,
         l.quantity,
         <>{rm(l.netSales)}{l.discountRatio != null && l.discountRatio < 1 && <Text as="span" tone="subdued"> ({Math.round(l.discountRatio * 100)}%)</Text>}</>,
-        rm(l.margin), rm(l.payable), '',
+        rm(l.margin), rm(l.payable),
       ]);
     }
-    rows.push([bold(`Subtotal ${loc}`), '', '', '', '', '', bold(q), bold(rm(n)), bold(rm(m)), bold(rm(p)), '']);
+    rows.push([bold(`Subtotal ${loc}`), ...blank(7), bold(q), bold(rm(n)), bold(rm(m)), bold(rm(p))]);
   }
   const t = report.totals;
-  rows.push([bold('TOTAL'), '', '', '', '', '', bold(t.quantity), bold(rm(t.netSales)), bold(rm(t.margin)), bold(rm(t.payable)), '']);
+  rows.push([bold('TOTAL'), ...blank(7), bold(t.quantity), bold(rm(t.netSales)), bold(rm(t.margin)), bold(rm(t.payable))]);
   return rows;
 }
 
@@ -93,8 +94,8 @@ function PreviewBody({ report, locationName }) {
       ) : (
         <Card padding="0">
           <DataTable
-            columnContentTypes={['text', 'text', 'text', 'text', 'text', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'text']}
-            headings={['Date', 'Order', 'Product', 'Variant', 'SKU', 'RRP', 'Qty', 'Net sales', 'Margin', 'Payable', '']}
+            columnContentTypes={['text', 'text', 'text', 'text', 'text', 'text', 'text', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric']}
+            headings={['Date', 'Order', 'Location', 'Vendor', 'Product', 'Variant', 'SKU', 'RRP', 'Qty', 'Net sales', 'Margin', 'Payable']}
             rows={rows}
             hideScrollIndicator
           />
