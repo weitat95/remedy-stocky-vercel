@@ -10,6 +10,7 @@ import {
   OrderDraftIcon,
   ProductIcon,
   MaximizeIcon,
+  CalendarTimeIcon,
   AdjustIcon,
   TransferIcon,
   ChartLineIcon,
@@ -34,6 +35,7 @@ import PODetail from './pages/PurchaseOrders/PODetail.jsx';
 import Orders from './pages/Orders/index.jsx';
 import Products from './pages/Inventory/Products.jsx';
 import MaxQuantity from './pages/MaxQuantity/index.jsx';
+import PriceScheduler from './pages/PriceScheduler/index.jsx';
 import Consignment from './pages/Consignment/index.jsx';
 import SalesByVendor from './pages/SalesByVendor/index.jsx';
 import VendorRrp from './pages/VendorRrp/index.jsx';
@@ -192,6 +194,13 @@ export default function App() {
             selected: is('/inventory/vendor-margins'),
           },
           {
+            label: 'Price Scheduler',
+            icon: CalendarTimeIcon,
+            url: '/price-scheduler',
+            onClick: () => navigate('/price-scheduler'),
+            selected: is('/price-scheduler'),
+          },
+          {
             label: 'Adjustments',
             icon: AdjustIcon,
             url: '/inventory/adjustments',
@@ -344,6 +353,7 @@ export default function App() {
         <Route path="/consignment/sales-by-vendor" element={<SalesByVendor />} />
         <Route path="/inventory/vendor-rrp" element={<VendorRrp />} />
         <Route path="/inventory/vendor-margins" element={<VendorMargins />} />
+        <Route path="/price-scheduler" element={<PriceScheduler />} />
         <Route path="/inventory/adjustments" element={<Adjustments />} />
         <Route path="/inventory/adjustments/:id" element={<AdjustmentDetail />} />
         <Route path="/transfers/*" element={<Transfers />} />
