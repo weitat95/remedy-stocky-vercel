@@ -384,7 +384,12 @@ function FootTrafficReport() {
   return (
     <BlockStack gap="400">
       <InlineStack align="space-between" blockAlign="center">
-        <Text variant="headingMd">Foot Traffic</Text>
+        <BlockStack gap="050">
+          <Text variant="headingMd">Foot Traffic</Text>
+          <Text as="span" variant="bodySm" tone="subdued">
+            Foot traffic last updated: {data?.trafficUpdatedAt ? inventoryAsAt(data.trafficUpdatedAt) : '—'}
+          </Text>
+        </BlockStack>
         <InlineStack gap="200" blockAlign="center">
           <InlineStack gap="100" blockAlign="center" wrap={false}>
             <Text as="span" tone="subdued">From</Text>
