@@ -811,7 +811,7 @@ function ReplenishmentReport() {
     }),
     // Same summary group regardless of store count, so the layout doesn't shift.
     { group: 'summary', groupLabel: 'Warehouse', key: 'replTotal', heading: 'Total REPL', numeric: true, repl: true, sum: true, get: (li) => li.replTotal },
-    { group: 'summary', groupLabel: 'Warehouse', key: 'endStock', heading: 'WH Cl. Bal', numeric: true, sum: true, get: (li) => li.endStock },
+    { group: 'summary', groupLabel: 'Warehouse', key: 'endStock', heading: 'WH', numeric: true, sum: true, get: (li) => li.endStock },
   ];
   // Contiguous runs of columns sharing a group -> one band cell each (colSpan).
   const groupBands = [];

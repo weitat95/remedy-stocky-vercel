@@ -44,7 +44,7 @@ export async function downloadReplenishmentXlsx({ filename, sheetTitle, meta, de
   const FIRST_COL_FIXED = 5; // Vendor, SKU, Product, Variant, Op. Bal
   // Store Qty appears twice: before replenishment (as in Shopify) and after adding REPL QTY.
   const perStore = ['Max Qty', 'Sold Qty', 'Store Qty', 'REPL QTY', 'Store Qty'];
-  const CLOSING_HEADING = 'WH\nCl. Bal';
+  const CLOSING_HEADING = 'WH';
 
   const headings = ['Vendor', 'SKU', 'Product', 'Variant', 'Op. Bal'];
   dests.forEach(() => headings.push(...perStore));
