@@ -624,6 +624,16 @@ const inventoryAsAt = (iso) => new Date(iso).toLocaleString('en-GB', {
   timeZone: 'Asia/Kuala_Lumpur', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
 });
 
+// End of the sales window for the Excel header: sales are pulled at generation time, so a period ending
+// on the generation day ends at that time; an earlier end date ends at the close of that day.
+function salesUntil(report) {
+  const tz = { timeZone: 'Asia/Kuala_Lumpur' };
+  const generatedDay = new Date(report.generatedAt).toLocaleDateString('en-CA', tz);
+  if (report.toDate.slice(0, 10) !== generatedDay) return '(to end of day)';
+  const time = new Date(report.generatedAt).toLocaleTimeString('en-GB', { ...tz, hour: 'numeric', minute: '2-digit', hour12: true });
+  return `(until ${time})`;
+}
+
 // Filesystem/URL-safe stamp for filenames — e.g. "2026-09-29_0300".
 function compactTimestamp(iso) {
   const d = new Date(iso);
@@ -631,7 +641,7 @@ function compactTimestamp(iso) {
 }
 
 function replQtyCell(replQty) {
-  if (replQty == null) return '—';
+  if (replQty == null) return '';
   if (replQty > 0) return <Badge tone="attention">{String(replQty)}</Badge>;
   if (replQty < 0) return <Badge tone="critical">{String(replQty)}</Badge>;
   return '0';
@@ -643,7 +653,7 @@ function replQtyCell(replQty) {
 // as-is here since it's more informative per-order than a generic bucket.
 const KNOWN_CHANNEL_LABELS = { web: 'Online Store', pos: 'POS', shopify_draft_order: 'Draft Order' };
 function channelLabel(sourceName) {
-  if (!sourceName) return '—';
+  if (!sourceName) return '';
   return KNOWN_CHANNEL_LABELS[sourceName] || sourceName;
 }
 
@@ -779,21 +789,29 @@ function ReplenishmentReport() {
     { key: 'sku', heading: 'SKU', get: (li) => li.sku },
     { key: 'productTitle', heading: 'Product', get: (li) => li.productTitle },
     { key: 'variantTitle', heading: 'Variant', get: (li) => li.variantTitle },
-    { key: 'sourceQty', heading: 'Op. Bal', numeric: true, get: (li) => li.sourceQty },
-    { key: 'soldQty', heading: multi ? 'Sold Qty (total)' : 'Sold Qty', numeric: true, get: (li) => li.soldQty },
+    { key: 'sourceQty', heading: 'Op. Bal', numeric: true, sum: true, get: (li) => li.sourceQty },
+    { key: 'soldQty', heading: multi ? 'Sold Qty (total)' : 'Sold Qty', numeric: true, sum: true, get: (li) => li.soldQty },
     ...destIds.flatMap((id) => {
       // `group` drives the upper header band + left border (and the CSV's group row).
       const g = { group: id, groupLabel: destName(id) };
       return [
         { ...g, key: `max:${id}`, heading: 'Max Qty', numeric: true, get: (li) => li.perDest[id]?.maxStock },
-        { ...g, key: `qty:${id}`, heading: 'Dest Qty', numeric: true, get: (li) => li.perDest[id]?.destQty },
-        ...(multi ? [{ ...g, key: `sold:${id}`, heading: 'Sold Qty', numeric: true, get: (li) => li.perDest[id]?.soldQty }] : []),
-        { ...g, key: `repl:${id}`, heading: 'REPL QTY', numeric: true, repl: true, get: (li) => li.perDest[id]?.replQty },
+        { ...g, key: `qty:${id}`, heading: 'Store Qty', numeric: true, sum: true, get: (li) => li.perDest[id]?.destQty },
+        ...(multi ? [{ ...g, key: `sold:${id}`, heading: 'Sold Qty', numeric: true, sum: true, get: (li) => li.perDest[id]?.soldQty }] : []),
+        { ...g, key: `repl:${id}`, heading: 'REPL QTY', numeric: true, repl: true, sum: true, get: (li) => li.perDest[id]?.replQty },
+        // Store stock after replenishment; empty when the warehouse has nothing (Op. Bal 0/empty) or there is no REPL figure.
+        {
+          ...g, key: `after:${id}`, heading: 'Store Qty', numeric: true, sum: true,
+          get: (li) => {
+            const repl = li.perDest[id]?.replQty;
+            return !li.sourceQty || typeof repl !== 'number' ? null : (li.perDest[id]?.destQty ?? 0) + repl;
+          },
+        },
       ];
     }),
     // Same summary group regardless of store count, so the layout doesn't shift.
-    { group: 'summary', groupLabel: multi ? 'All stores' : 'Source', key: 'replTotal', heading: 'Total REPL', numeric: true, repl: true, get: (li) => li.replTotal },
-    { group: 'summary', groupLabel: multi ? 'All stores' : 'Source', key: 'endStock', heading: 'Cl. Bal', numeric: true, get: (li) => li.endStock },
+    { group: 'summary', groupLabel: 'Warehouse', key: 'replTotal', heading: 'Total REPL', numeric: true, repl: true, sum: true, get: (li) => li.replTotal },
+    { group: 'summary', groupLabel: 'Warehouse', key: 'endStock', heading: 'WH Cl. Bal', numeric: true, sum: true, get: (li) => li.endStock },
   ];
   // Contiguous runs of columns sharing a group -> one band cell each (colSpan).
   const groupBands = [];
@@ -815,7 +833,15 @@ function ReplenishmentReport() {
   const clampedPage = Math.min(page, pageCount - 1);
   const pagedLineItems = sortedLineItems.slice(clampedPage * REPL_PAGE_SIZE, clampedPage * REPL_PAGE_SIZE + REPL_PAGE_SIZE);
 
-  const toCsvRow = (li) => columns.map((c) => c.get(li) ?? '—');
+  // Subtotals over every row currently shown (after the filter, across all pages) — mirrors the Excel export's row 5.
+  const subtotals = columns.map((c) => {
+    if (!c.sum) return null;
+    return sortedLineItems.reduce((sum, li) => {
+      const v = c.get(li);
+      return typeof v === 'number' ? sum + v : sum;
+    }, 0);
+  });
+  const toCsvRow = (li) => columns.map((c) => c.get(li) ?? '');
   const headings = columns.map((c) => c.heading);
   // CSV mirror of the on-screen group band: store name over the first column of its
   // group, blank elsewhere — a spreadsheet has no colSpan to lean on.
@@ -829,7 +855,7 @@ function ReplenishmentReport() {
       return <Button variant="plain" onClick={() => setSalesDetailItem(li)}>{li.soldQty}</Button>;
     }
     if (c.repl) return replQtyCell(v);
-    return v ?? '—';
+    return v ?? '';
   };
 
   const handleSort = (index, direction) => {
@@ -853,6 +879,7 @@ function ReplenishmentReport() {
         ...(report.salesChannel ? [['Sales Channel filter', channelsLabel(report.salesChannel)]] : []),
         ...(report.posLocationId ? [['POS Location filter', locationsById[report.posLocationId] || report.posLocationId]] : []),
         [],
+        withSeparators(columns.map((c, i) => (i === 0 ? 'Subtotal' : subtotals[i] ?? '')), ''),
         withSeparators(groupRow, ''),
         withSeparators(headings, ''),
         ...sortedLineItems.map((li) => withSeparators(toCsvRow(li), '')),
@@ -875,13 +902,12 @@ function ReplenishmentReport() {
       sheetTitle: `replenishment_${range}`,
       meta: [
         ['Inventory as at', inventoryAsAt(report.generatedAt)],
-        ['Sales Period', `${report.fromDate.slice(0, 10)} – ${report.toDate.slice(0, 10)}`],
+        ['Sales Period', `${report.fromDate.slice(0, 10)} – ${report.toDate.slice(0, 10)} ${salesUntil(report)}`],
         ['Replenishment From:', destName(report.sourceLocationId)],
         ['Replenishment To:', destIds.map(destName).join(', ')],
         ...(filters.length ? [['Filters:', filters.join(' · ')]] : []),
       ],
       dests: destIds.map((id) => ({ id, name: destName(id) })),
-      summaryLabel: multi ? 'All stores' : 'Source',
       lineItems: sortedLineItems,
     });
   };
@@ -1052,6 +1078,19 @@ function ReplenishmentReport() {
                     </tr>
                   </thead>
                   <tbody>
+                    <tr>
+                      {columns.map((c, i) => (
+                        <td
+                          key={c.key}
+                          style={{
+                            padding: '8px 12px', textAlign: c.numeric ? 'right' : 'left', fontWeight: 600,
+                            borderBottom: '1px solid var(--p-color-border)', borderLeft: groupBorder(i),
+                          }}
+                        >
+                          {i === 0 ? 'Subtotal' : subtotals[i] ?? ''}
+                        </td>
+                      ))}
+                    </tr>
                     {pagedLineItems.map((li) => (
                       <tr key={li.shopifyVariantId}>
                         {columns.map((c, i) => (
