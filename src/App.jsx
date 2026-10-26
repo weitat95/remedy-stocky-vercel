@@ -19,6 +19,7 @@ import {
   StoreIcon,
   WifiIcon,
   RefreshIcon,
+  PrintIcon,
 } from '@shopify/polaris-icons';
 
 import { getMe, logout as logoutApi } from './api/auth.js';
@@ -39,6 +40,7 @@ import PriceScheduler from './pages/PriceScheduler/index.jsx';
 import Consignment from './pages/Consignment/index.jsx';
 import SalesByVendor from './pages/SalesByVendor/index.jsx';
 import VendorRrp from './pages/VendorRrp/index.jsx';
+import Labels from './pages/Labels/index.jsx';
 import VendorMargins from './pages/VendorMargins/index.jsx';
 import Adjustments from './pages/Inventory/Adjustments.jsx';
 import AdjustmentDetail from './pages/Inventory/AdjustmentDetail.jsx';
@@ -178,6 +180,13 @@ export default function App() {
             url: '/inventory/max-quantity',
             onClick: () => navigate('/inventory/max-quantity'),
             selected: is('/inventory/max-quantity'),
+          },
+          {
+            label: 'Labels',
+            icon: PrintIcon,
+            url: '/inventory/labels',
+            onClick: () => navigate('/inventory/labels'),
+            selected: is('/inventory/labels'),
           },
           {
             label: 'Vendor RRP',
@@ -351,6 +360,7 @@ export default function App() {
         <Route path="/inventory/max-quantity" element={<MaxQuantity />} />
         <Route path="/consignment" element={<Consignment />} />
         <Route path="/consignment/sales-by-vendor" element={<SalesByVendor />} />
+        <Route path="/inventory/labels" element={<Labels />} />
         <Route path="/inventory/vendor-rrp" element={<VendorRrp />} />
         <Route path="/inventory/vendor-margins" element={<VendorMargins />} />
         <Route path="/price-scheduler" element={<PriceScheduler />} />

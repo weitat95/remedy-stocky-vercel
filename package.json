@@ -6,13 +6,15 @@
   "scripts": {
     "dev": "vite --port 3000",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test src/utils/labels/"
   },
   "dependencies": {
     "@shopify/polaris": "^12.0.0",
     "@tanstack/react-query": "^5.45.1",
     "axios": "^1.7.2",
     "exceljs": "^4.4.0",
+    "jsbarcode": "^3.12.1",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
     "react": "^18.3.1",
