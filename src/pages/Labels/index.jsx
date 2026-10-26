@@ -179,11 +179,13 @@ export default function Labels() {
       if (!csvRows.length) { setImportError('CSV file is empty or has no data rows.'); return; }
       const qtyKey = ['quantity', 'qty'].find((k) => k in csvRows[0]);
       if (!('sku' in csvRows[0]) || !qtyKey) { setImportError('CSV must have "sku" and "quantity" columns.'); return; }
-      const added = csvRows.map((r, i) => newRow({ csvLine: i + 2, sku: (r.sku || '').trim(), qty: (r[qtyKey] ?? '').trim() }));
+      const added = csvRows.map((r, i) => newRow({ csvLine: i + 2, sku: (r.sku || '').trim(), qty: (r[qtyKey] ?? '').trim(), resolution: 'pending' }));
       setRows((prev) => [...prev, ...added]);
       setImportOpen(false);
       await applyResolution(await resolveSkus(added));
     } catch (err) {
+      // Rows already added must not sit on "looking up…" forever.
+      setRows((prev) => prev.map((r) => (r.resolution === 'pending' ? { ...r, resolution: 'lookup-failed' } : r)));
       setImportError('CSV import failed: ' + (err.response?.data?.error || err.message));
     } finally {
       setImporting(false);
@@ -210,10 +212,13 @@ export default function Labels() {
   const handleSelectVariant = useCallback(async (picked) => {
     const opt = variantOptions.find((o) => o.value === picked[0]);
     if (!opt) return;
-    const row = newRow({ sku: opt.sku, qty: '1', variantId: opt.value });
+    const row = newRow({ sku: opt.sku, qty: '1', variantId: opt.value, resolution: 'pending' });
     setRows((prev) => [...prev, row]);
     setVariantSearch('');
-    try { await attachVariants([opt.value]); } catch (err) { setToast(err.response?.data?.error || err.message); }
+    try { await attachVariants([opt.value]); } catch (err) {
+      setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, resolution: 'lookup-failed' } : r)));
+      setToast(err.response?.data?.error || err.message);
+    }
   }, [variantOptions, attachVariants]);
 
   // ── Re-check (after fixing things in Shopify) / edit / remove ────────────
@@ -239,13 +244,14 @@ export default function Labels() {
   // ── Preview (a real PDF of one label, so what you see is what prints) ─────
   const [guides, setGuides] = useState(true);
   const [preview, setPreview] = useState({ url: null, errors: [], source: '' });
-  const previewRow = checks.printable[0]?.row || rows.find((r) => r.variant?.barcode) || null;
+  // Depends on the variant (stable across quantity edits), not the row, so typing a quantity doesn't reload the PDF.
+  const previewVariant = (checks.printable[0]?.row || rows.find((r) => r.variant?.barcode))?.variant || null;
   useEffect(() => {
     const timer = setTimeout(() => {
       // A real row previews exactly as it will print (a missing price shows no price line, never a made-up one);
       // with no rows yet, a sample label.
-      const sampleData = previewRow?.variant
-        ? layoutDataFor(previewRow.variant, cfg)
+      const sampleData = previewVariant
+        ? layoutDataFor(previewVariant, cfg)
         : { ...SAMPLE_DATA, price: formatPrice('99', cfg.price) };
       const res = renderPreview(cfg, sampleData, measure, { guides });
       setPreview((old) => {
@@ -253,24 +259,28 @@ export default function Labels() {
         return {
           url: res.doc ? URL.createObjectURL(res.doc.output('blob')) : null,
           errors: res.errors || [],
-          source: previewRow?.variant ? (previewRow.variant.sku || previewRow.variant.productTitle) : 'sample label',
+          source: previewVariant ? (previewVariant.sku || previewVariant.productTitle) : 'sample label',
         };
       });
     }, 250);
     return () => clearTimeout(timer);
-  }, [cfg, previewRow, guides, measure]);
+  }, [cfg, previewVariant, guides, measure]);
   useEffect(() => () => { setPreview((old) => { if (old.url) URL.revokeObjectURL(old.url); return old; }); }, []);
 
   // ── Fit barcode ───────────────────────────────────────────────────────────
-  const [fitMessage, setFitMessage] = useState('');
+  // The message belongs to the scale it produced: it disappears as soon as the slider moves off it.
+  const [fit, setFit] = useState({ scale: null, message: '' });
   const fitBarcode = () => {
     const samples = rows.filter((r) => r.variant?.barcode?.trim()).map((r) => layoutDataFor(r.variant, cfg));
     const best = maxBarcodeScale(cfg, samples.length ? samples : [{ ...SAMPLE_DATA, price: formatPrice('99', cfg.price) }], measure);
-    if (best == null) { setFitMessage("Some row doesn't fit even with the smallest barcode — see the row messages or the preview."); return; }
+    if (best == null) {
+      setFit({ scale: cfg.barcode.scale, message: "Some row doesn't fit even with the smallest barcode — see the row messages or the preview." });
+      return;
+    }
     setCfg((c) => ({ ...c, barcode: { ...c.barcode, scale: best } }));
-    setFitMessage(`Largest that fits ${samples.length ? 'every row' : 'a sample label'}: ${Math.round(best * 100)}%`);
+    setFit({ scale: best, message: `Largest that fits ${samples.length ? 'every row' : 'a sample label'}: ${Math.round(best * 100)}%` });
   };
-  useEffect(() => { setFitMessage(''); }, [cfg.barcode.scale]);
+  const fitMessage = fit.scale === cfg.barcode.scale ? fit.message : '';
 
   // ── Output ────────────────────────────────────────────────────────────────
   const buildPdf = () => renderLabelsPdf(cfg, checks.printable.map((p) => ({ layout: p.layout, qty: p.qty })));
@@ -321,7 +331,7 @@ export default function Labels() {
               </Banner>
             )}
             {blockedCount > 0 && (
-              <Banner tone="critical" title={`${blockedCount} row${blockedCount === 1 ? '' : 's'} need fixing — nothing prints until every row is clean`}>
+              <Banner tone="critical" title={`${blockedCount} row${blockedCount === 1 ? ' needs' : 's need'} fixing — nothing prints until every row is clean`}>
                 <Text as="p">Fix barcodes and prices in Shopify (links in the table), then press Re-check. Wrong quantities can be edited in the table; rows you don't want can be removed.</Text>
               </Banner>
             )}

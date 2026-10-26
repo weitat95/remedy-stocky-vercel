@@ -241,3 +241,12 @@ test('configEdit: switching label type keeps what is printed, changes the size',
   assert.equal(next.sku.on, true);
   assert.equal(next.rotation, 0);
 });
+
+test('rows: a row still being looked up, or whose lookup failed, blocks with a clear message', () => {
+  const cfg = configFromPreset('dymo-30336');
+  for (const [resolution, text] of [['pending', 'Looking up'], ['lookup-failed', 'Re-check']]) {
+    const out = checkRows([row({ variant: null, resolution })], cfg, real);
+    assert.ok(!out.ready);
+    assert.ok(out.results.get('r1').issues[0].message.includes(text), resolution);
+  }
+});

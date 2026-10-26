@@ -32,7 +32,7 @@ export function layoutDataFor(v, cfg) {
 
 const block = (code, message) => ({ code, message, severity: 'block' });
 
-// Row: { id, sku, qty (string|number), variant: null | {...}, resolution: null | 'blank-sku'|'not-found'|'archived'|'multiple' }
+// Row: { id, sku, qty (string|number), variant: null | {...}, resolution: null | 'blank-sku'|'not-found'|'archived'|'multiple'|'pending'|'lookup-failed' }
 export function checkRows(rows, cfg, measure, { allowNoPrice = false } = {}) {
   const runErrors = [];
   for (const [what, text] of [['Price prefix', cfg.price.prefix], ['Custom text', cfg.custom.text]]) {
@@ -40,7 +40,7 @@ export function checkRows(rows, cfg, measure, { allowNoPrice = false } = {}) {
     if (bad.length) runErrors.push(`${what} contains characters that can't be printed: ${bad.join(' ')}`);
   }
   if (cfg.pageMode === 'custom' && (cfg.page.w < cfg.label.w - PAGE_SLACK_MM || cfg.page.h < cfg.label.h - PAGE_SLACK_MM)) {
-    runErrors.push('The label is larger than the page size');
+    runErrors.push('The label is larger than the page size — set Page size to "Same as label" (or enlarge the page)');
   }
 
   // Duplicates by variant (or by SKU text for rows that never resolved).
@@ -65,8 +65,10 @@ export function checkRows(rows, cfg, measure, { allowNoPrice = false } = {}) {
         'not-found': `SKU "${row.sku}" was not found in Shopify`,
         archived: `SKU "${row.sku}" belongs to an archived product`,
         multiple: `SKU "${row.sku}" matches more than one product — pick one`,
+        pending: `Looking up "${row.sku}" in Shopify…`,
+        'lookup-failed': `Looking up "${row.sku}" failed — press Re-check`,
       }[row.resolution] || `SKU "${row.sku}" is not resolved`;
-      issues.push(block((row.resolution || 'not-found').toUpperCase().replace('-', '_'), msg));
+      issues.push(block((row.resolution || 'not-found').toUpperCase().replace(/-/g, '_'), msg));
     } else {
       if (v.productStatus === 'ARCHIVED') issues.push(block('ARCHIVED', 'Product is archived'));
 
