@@ -44,3 +44,9 @@ export async function convertToSupplier(id) {
   const res = await apiClient.put(`/vendors/${id}/convert_to_supplier`);
   return res.data.data;
 }
+
+
+export async function bulkHideVendors(ids, hidden, dryRun = false) {
+  const res = await apiClient.post('/vendors/bulk-hide', { ids, hidden, dryRun });
+  return res.data.data;
+}

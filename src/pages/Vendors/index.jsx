@@ -1,11 +1,11 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Page, Card, IndexTable, IndexFilters, IndexFiltersMode, ChoiceList, Text, Badge,
-  Modal, FormLayout, TextField, Banner, InlineStack, Button, Toast, useSetIndexFiltersMode,
+  Page, Card, IndexTable, IndexFilters, ChoiceList, Text, Badge,
+  Modal, FormLayout, TextField, Banner, InlineStack, BlockStack, Button, Toast, useSetIndexFiltersMode, useIndexResourceState,
 } from '@shopify/polaris';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getVendors, syncVendors, getVendorSyncStatus, hideVendor, unhideVendor, convertToSupplier, updateVendor } from '../../api/vendors.js';
+import { getVendors, syncVendors, getVendorSyncStatus, hideVendor, unhideVendor, bulkHideVendors, convertToSupplier, updateVendor } from '../../api/vendors.js';
 
 const PAGE_SIZE = 25;
 const STATUS_TABS = [
@@ -14,7 +14,15 @@ const STATUS_TABS = [
   { id: 'all', content: 'All' },
 ];
 // Sortable columns, in the order they appear in the table (index → row field)
-const SORT_FIELDS = ['name', 'leadDays', 'restockDays', 'orderMinQty', 'orderMaxQty', 'supplier'];
+const SORT_FIELDS = ['name', 'productCount', 'activeProductCount', 'leadDays', 'restockDays', 'orderMinQty', 'orderMaxQty', 'supplier'];
+const PRODUCT_STATUS_CHOICES = [
+  { label: 'All products archived', value: 'archived' },
+  { label: 'Has active products', value: 'active' },
+  { label: 'No products in Shopify', value: 'empty' },
+];
+// Counts are null until the first sync, so a vendor is only classified once synced.
+const isAllArchived = (v) => v.productCount > 0 && v.activeProductCount === 0;
+const isEmpty = (v) => v.productCount === 0;
 
 function formatSyncedAt(iso) {
   if (!iso) return 'Never';
@@ -37,6 +45,8 @@ export default function Vendors() {
   const [statusTab, setStatusTab] = useState(0);
   const [query, setQuery] = useState('');
   const [supplierFilter, setSupplierFilter] = useState([]);
+  const [productStatus, setProductStatus] = useState([]);
+  const [pendingBulk, setPendingBulk] = useState(null); // { ids, hidden, warnings }
   const [sort, setSort] = useState({ column: 0, direction: 'ascending' });
   const [page, setPage] = useState(1);
 
@@ -45,13 +55,30 @@ export default function Vendors() {
     queryFn: getVendorSyncStatus,
   });
 
+  const syncRunning = syncStatus?.state === 'running';
+
+  // Sync runs in the background on the server; poll its state while it's in flight.
+  useEffect(() => {
+    if (!syncRunning) return undefined;
+    const t = setInterval(() => queryClient.invalidateQueries({ queryKey: ['vendors-sync-status'] }), 3000);
+    return () => clearInterval(t);
+  }, [syncRunning, queryClient]);
+
+  // Announce the outcome when a sync we saw running finishes.
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (syncRunning) { wasRunning.current = true; return; }
+    if (!wasRunning.current || !syncStatus) return;
+    wasRunning.current = false;
+    queryClient.invalidateQueries({ queryKey: ['vendors'] });
+    setToast(syncStatus.state === 'error'
+      ? { message: syncStatus.error || 'Sync failed', error: true }
+      : { message: 'Vendor sync finished' });
+  }, [syncRunning, syncStatus, queryClient]);
+
   const syncMutation = useMutation({
     mutationFn: syncVendors,
-    onSuccess: ({ syncedCount }) => {
-      queryClient.invalidateQueries({ queryKey: ['vendors'] });
-      queryClient.invalidateQueries({ queryKey: ['vendors-sync-status'] });
-      setToast({ message: `Synced ${syncedCount} vendor${syncedCount === 1 ? '' : 's'} from Shopify` });
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['vendors-sync-status'] }),
     onError: (err) => setToast({ message: err.message || 'Sync failed', error: true }),
   });
 
@@ -106,6 +133,9 @@ export default function Vendors() {
         if (status === 'active' && v.hidden) return false;
         if (status === 'hidden' && !v.hidden) return false;
         if (q && !v.name.toLowerCase().includes(q) && !v.supplier?.name.toLowerCase().includes(q)) return false;
+        if (productStatus.includes('archived') && !isAllArchived(v)) return false;
+        if (productStatus.includes('active') && !(v.activeProductCount > 0)) return false;
+        if (productStatus.includes('empty') && !isEmpty(v)) return false;
         if (supplierFilter.includes('yes') && !supplierFilter.includes('no') && !v.supplierId) return false;
         if (supplierFilter.includes('no') && !supplierFilter.includes('yes') && v.supplierId) return false;
         return true;
@@ -119,29 +149,83 @@ export default function Vendors() {
         if (bv == null) return -1;
         return (typeof av === 'string' ? av.localeCompare(bv) : av - bv) * dir;
       });
-  }, [vendors, query, statusTab, supplierFilter, sort]);
+  }, [vendors, query, statusTab, supplierFilter, productStatus, sort]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount);
   const pageRows = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
+  // Not-yet-hidden vendors whose every product is archived — the clean-up candidates.
+  const archivedCandidates = useMemo(
+    () => vendors.filter((v) => !v.hidden && isAllArchived(v)).length,
+    [vendors],
+  );
+
+  const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } =
+    useIndexResourceState(filtered);
+
+  const bulkCheckMutation = useMutation({
+    mutationFn: ({ ids, hidden }) => bulkHideVendors(ids, hidden, true),
+    onSuccess: (res, { ids, hidden }) => setPendingBulk({ ids, hidden, warnings: res.warnings }),
+    onError: (err) => setToast({ message: err.message || 'Check failed', error: true }),
+  });
+  const bulkHideMutation = useMutation({
+    mutationFn: ({ ids, hidden }) => bulkHideVendors(ids, hidden),
+    onSuccess: ({ updated }, { hidden }) => {
+      queryClient.invalidateQueries({ queryKey: ['vendors'] });
+      setPendingBulk(null);
+      clearSelection();
+      setToast({ message: `${hidden ? 'Hid' : 'Unhid'} ${updated} vendor${updated === 1 ? '' : 's'}` });
+    },
+    onError: (err) => setToast({ message: err.message || 'Update failed', error: true }),
+  });
+  // Unhiding has nothing to warn about, so it skips the confirmation step
+  const startBulk = (hidden) => {
+    if (hidden) bulkCheckMutation.mutate({ ids: selectedResources, hidden });
+    else bulkHideMutation.mutate({ ids: selectedResources, hidden });
+  };
+
   const resetPage = (fn) => (v) => { fn(v); setPage(1); };
   const supplierFilterLabel = supplierFilter.map((v) => (v === 'yes' ? 'Is a supplier' : 'Not a supplier')).join(', ');
-  const appliedFilters = supplierFilter.length
-    ? [{ key: 'supplier', label: `Supplier: ${supplierFilterLabel}`, onRemove: () => resetPage(setSupplierFilter)([]) }]
-    : [];
+  const appliedFilters = [
+    ...(supplierFilter.length
+      ? [{ key: 'supplier', label: `Supplier: ${supplierFilterLabel}`, onRemove: () => resetPage(setSupplierFilter)([]) }]
+      : []),
+    ...(productStatus.length
+      ? [{
+          key: 'productStatus',
+          label: `Products: ${PRODUCT_STATUS_CHOICES.find((c) => c.value === productStatus[0]).label}`,
+          onRemove: () => resetPage(setProductStatus)([]),
+        }]
+      : []),
+  ];
 
   return (
     <Page
       title="Vendors"
       subtitle={`Last synced: ${formatSyncedAt(syncStatus?.lastSyncedAt)}`}
       primaryAction={{
-        content: 'Sync now',
+        content: syncRunning ? 'Syncing…' : 'Sync now',
         onAction: () => syncMutation.mutate(),
-        loading: syncMutation.isPending,
+        loading: syncRunning || syncMutation.isPending,
       }}
     >
+      <BlockStack gap="400">
       {error && <Banner tone="critical">{error.message}</Banner>}
+      {syncStatus?.state === 'error' && !syncRunning && (
+        <Banner tone="critical">Last sync failed: {syncStatus.error}</Banner>
+      )}
+      {!syncStatus?.lastSyncedAt && !syncRunning && (
+        <Banner tone="info">Run “Sync now” to load product counts and find vendors with only archived products.</Banner>
+      )}
+      {archivedCandidates > 0 && !productStatus.includes('archived') && (
+        <Banner
+          tone="warning"
+          action={{ content: 'Show them', onAction: () => { setProductStatus(['archived']); setStatusTab(0); setPage(1); } }}
+        >
+          {archivedCandidates} vendor{archivedCandidates === 1 ? ' has' : 's have'} only archived products.
+        </Banner>
+      )}
       <Card padding="0">
         <IndexFilters
           mode={mode}
@@ -172,9 +256,22 @@ export default function Vendors() {
               />
             ),
             shortcut: true,
+          }, {
+            key: 'productStatus',
+            label: 'Products',
+            filter: (
+              <ChoiceList
+                title="Products"
+                titleHidden
+                choices={PRODUCT_STATUS_CHOICES}
+                selected={productStatus}
+                onChange={resetPage(setProductStatus)}
+              />
+            ),
+            shortcut: true,
           }]}
           appliedFilters={appliedFilters}
-          onClearAll={() => { setSupplierFilter([]); setQuery(''); setPage(1); }}
+          onClearAll={() => { setSupplierFilter([]); setProductStatus([]); setQuery(''); setPage(1); }}
           sortOptions={[]}
           canCreateNewView={false}
           loading={isLoading}
@@ -182,10 +279,17 @@ export default function Vendors() {
         <IndexTable
           resourceName={{ singular: 'vendor', plural: 'vendors' }}
           itemCount={filtered.length}
-          selectable={false}
+          selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length}
+          onSelectionChange={handleSelectionChange}
+          promotedBulkActions={[
+            { content: 'Hide selected', onAction: () => startBulk(true) },
+            { content: 'Unhide selected', onAction: () => startBulk(false) },
+          ]}
           loading={isLoading}
           headings={[
             { title: 'Vendor' },
+            { title: 'Products', alignment: 'end' },
+            { title: 'Active', alignment: 'end' },
             { title: 'Lead (days)', alignment: 'end' },
             { title: 'Restock (days)', alignment: 'end' },
             { title: 'Min order qty', alignment: 'end' },
@@ -193,7 +297,7 @@ export default function Vendors() {
             { title: 'Supplier' },
             { title: 'Actions' },
           ]}
-          sortable={[true, true, true, true, true, true, false]}
+          sortable={[true, true, true, true, true, true, true, true, false]}
           sortDirection={sort.direction}
           sortColumnIndex={sort.column}
           onSort={(column, direction) => { setSort({ column, direction }); setPage(1); }}
@@ -213,6 +317,7 @@ export default function Vendors() {
               id={vendor.id}
               key={vendor.id}
               position={index}
+              selected={selectedResources.includes(vendor.id)}
               onClick={() => navigate(`/vendors/${vendor.id}`)}
             >
               <IndexTable.Cell>
@@ -220,6 +325,12 @@ export default function Vendors() {
                   <Text variant="bodyMd" fontWeight="bold" as="span">{vendor.name}</Text>
                   {vendor.hidden && <Badge>Hidden</Badge>}
                 </InlineStack>
+              </IndexTable.Cell>
+              <IndexTable.Cell><Text as="span" alignment="end" numeric>{vendor.productCount ?? '—'}</Text></IndexTable.Cell>
+              <IndexTable.Cell>
+                <Text as="span" alignment="end" numeric tone={isAllArchived(vendor) ? 'critical' : undefined}>
+                  {vendor.activeProductCount ?? '—'}
+                </Text>
               </IndexTable.Cell>
               <IndexTable.Cell><Text as="span" alignment="end" numeric>{vendor.leadDays}</Text></IndexTable.Cell>
               <IndexTable.Cell><Text as="span" alignment="end" numeric>{vendor.restockDays}</Text></IndexTable.Cell>
@@ -254,6 +365,36 @@ export default function Vendors() {
           ))}
         </IndexTable>
       </Card>
+      </BlockStack>
+
+      <Modal
+        open={!!pendingBulk}
+        onClose={() => setPendingBulk(null)}
+        title={`Hide ${pendingBulk?.ids.length} vendor${pendingBulk?.ids.length === 1 ? '' : 's'}?`}
+        primaryAction={{
+          content: 'Hide',
+          destructive: true,
+          onAction: () => bulkHideMutation.mutate({ ids: pendingBulk.ids, hidden: true }),
+          loading: bulkHideMutation.isPending,
+        }}
+        secondaryActions={[{ content: 'Cancel', onAction: () => setPendingBulk(null) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p">Hidden vendors disappear from vendor pickers and can be unhidden any time from the Hidden tab.</Text>
+            {pendingBulk?.warnings.length > 0 && (
+              <Banner tone="warning" title={`${pendingBulk.warnings.length} of these ${pendingBulk.warnings.length === 1 ? 'has' : 'have'} linked data`}>
+                <ul>
+                  {pendingBulk.warnings.slice(0, 10).map((w) => (
+                    <li key={w.id}>{w.name}: {w.reasons.join(', ')}</li>
+                  ))}
+                </ul>
+                {pendingBulk.warnings.length > 10 && <Text as="p">…and {pendingBulk.warnings.length - 10} more</Text>}
+              </Banner>
+            )}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
 
       <Modal
         open={!!editVendor}
