@@ -17,6 +17,7 @@ export const BUILT_IN_PRESETS = [
   { key: 'zebra-10010039', name: 'Zebra 10010039 (51 × 25 mm)', label: { w: 51, h: 25 }, rotation: 0 },
   { key: 'zebra-10010044', name: 'Zebra 10010044 (76 × 51 mm)', label: { w: 76, h: 51 }, rotation: 0 },
   { key: 'avery-2160-roll', name: 'Avery 2160 roll (67 × 25 mm)', label: { w: 67, h: 25 }, rotation: 0 },
+  { key: 'thermal-roll-2.25x1.25', name: 'Thermal roll 2.25 × 1.25 in (57.15 × 31.75 mm)', label: { w: 57.15, h: 31.75 }, rotation: 0 },
 ];
 
 export const CUSTOM_PRESET_KEY = 'custom';
