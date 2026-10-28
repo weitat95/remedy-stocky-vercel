@@ -139,6 +139,8 @@ export default function TemplatePanel({
                 <NumberField label="Max lines" value={cfg.title.maxLines} min={1} max={6} step={1} onChange={(v) => patch('title', { maxLines: Math.round(v) })} />
               </FormLayout.Group>
               <Checkbox label="Bold" checked={cfg.title.bold} onChange={(v) => patch('title', { bold: v })} />
+              <Checkbox label="Shrink long titles to fit" helpText="A title too long for its label shrinks below the smallest size (down to 3 pt) instead of blocking the row. Other labels keep their normal size."
+                checked={!!cfg.title.shrinkToFit} onChange={(v) => patch('title', { shrinkToFit: v })} />
             </FormLayout>
           )}
           <Divider />

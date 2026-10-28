@@ -24,7 +24,7 @@ export function applyPreset(cfg, key) {
   return {
     ...next,
     printerDpi: cfg.printerDpi,
-    title: { ...next.title, on: cfg.title.on, mode: cfg.title.mode, bold: cfg.title.bold },
+    title: { ...next.title, on: cfg.title.on, mode: cfg.title.mode, bold: cfg.title.bold, shrinkToFit: cfg.title.shrinkToFit },
     price: { ...next.price, on: cfg.price.on, source: cfg.price.source, prefix: cfg.price.prefix, decimals: cfg.price.decimals },
     sku: { ...next.sku, on: cfg.sku.on },
     custom: { ...next.custom, on: cfg.custom.on, text: cfg.custom.text },

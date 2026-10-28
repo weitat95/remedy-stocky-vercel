@@ -11,6 +11,7 @@ import { encodeCode128, barRuns } from './barcode.js';
 export const PT_MM = 25.4 / 72;
 const LINE_HEIGHT = 1.2;
 const SHRINK_STEP_PT = 0.25;
+const SHRINK_TO_FIT_FLOOR_PT = 3; // absolute smallest title size when title.shrinkToFit is on
 const MIN_LINE_SHRINK = 0.6; // single-line fields may shrink to 60% of their size before the row is blocked
 
 export const frameOf = (label, rotation) =>
@@ -99,12 +100,14 @@ export function layoutLabel(cfg, data, measure) {
   const rest = [...above, { key: 'bars', h: barH }, ...(numberBlock ? [numberBlock] : [])];
   const restH = rest.reduce((t, b) => t + b.h, 0) + gap * (rest.length - 1);
 
-  // ── Title: the largest size (down to minSize) that wraps within maxLines AND fits the height ──
+  // ── Title: the largest size (down to minSize, or lower with shrinkToFit) that wraps within maxLines AND fits the height ──
   let titleBlock = null;
   if (cfg.title.on && data.title) {
     const maxH = innerH - restH - gap;
     const bold = cfg.title.bold;
-    for (let sz = cfg.title.size * s; sz >= cfg.title.minSize * s - 1e-9; sz -= SHRINK_STEP_PT) {
+    // shrinkToFit: a title too long for its label keeps shrinking below minSize (this label only; others unaffected)
+    const floor = cfg.title.shrinkToFit ? Math.min(SHRINK_TO_FIT_FLOOR_PT, cfg.title.minSize * s) : cfg.title.minSize * s;
+    for (let sz = cfg.title.size * s; sz >= floor - 1e-9; sz -= SHRINK_STEP_PT) {
       const lines = wrap(data.title, sz, bold, innerW, measure);
       if (!lines || lines.length > cfg.title.maxLines) continue;
       const h = lines.length * lineBox(sz);
@@ -112,7 +115,7 @@ export function layoutLabel(cfg, data, measure) {
     }
     if (!titleBlock) {
       errors.push(err('TITLE_NO_FIT',
-        `Title "${data.title}" does not fit (max ${cfg.title.maxLines} line${cfg.title.maxLines === 1 ? '' : 's'}, smallest ${cfg.title.minSize}pt)`));
+        `Title "${data.title}" does not fit (max ${cfg.title.maxLines} line${cfg.title.maxLines === 1 ? '' : 's'}, smallest ${cfg.title.shrinkToFit ? Math.min(SHRINK_TO_FIT_FLOOR_PT, cfg.title.minSize * s).toFixed(1) : cfg.title.minSize}pt)`));
     }
   }
 
