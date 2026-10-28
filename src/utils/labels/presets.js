@@ -17,6 +17,7 @@ export const BUILT_IN_PRESETS = [
   { key: 'zebra-10010039', name: 'Zebra 10010039 (51 × 25 mm)', label: { w: 51, h: 25 }, rotation: 0 },
   { key: 'zebra-10010044', name: 'Zebra 10010044 (76 × 51 mm)', label: { w: 76, h: 51 }, rotation: 0 },
   { key: 'avery-2160-roll', name: 'Avery 2160 roll (67 × 25 mm)', label: { w: 67, h: 25 }, rotation: 0 },
+  { key: 'two-up-30x15', name: '2-up roll, barcode only (2 × 30 × 15 mm)', label: { w: 30, h: 15 }, rotation: 0, across: 2, acrossGap: 0, barcodeOnly: true },
   { key: 'thermal-roll-2.25x1.25', name: 'Thermal roll 2.25 × 1.25 in (57.15 × 31.75 mm)', label: { w: 57.15, h: 31.75 }, rotation: 0 },
 ];
 
@@ -35,7 +36,7 @@ const round1k = (n) => Math.round(n * 1000) / 1000;
 
 // Default settings for a label size. Everything is authored at this size (`design`); resizing the label
 // later scales it all proportionally (see layout.js).
-export function buildConfig({ label, page, rotation = 0, presetKey = CUSTOM_PRESET_KEY, minimal = false }) {
+export function buildConfig({ label, page, rotation = 0, presetKey = CUSTOM_PRESET_KEY, minimal = false, across = 1, acrossGap = 0, barcodeOnly = false }) {
   const rotated = rotation === 90 || rotation === 270;
   const frame = rotated ? { w: label.h, h: label.w } : { w: label.w, h: label.h };
   const k = frame.h / 25; // the Dymo samples are ~25 mm tall in reading orientation
@@ -48,22 +49,24 @@ export function buildConfig({ label, page, rotation = 0, presetKey = CUSTOM_PRES
     label: { ...label },
     design: { ...label },
     lockRatio: true,
+    across,
+    acrossGap,
     rotation,
     offset: { x: 0, y: 0 },
     printerDpi: dpi,
     padding: round1(Math.max(0.5, k)),
     gap: round1(Math.max(0.2, 0.5 * k)),
-    title: { on: !minimal, mode: 'combined', size: round1(Math.max(4, 11 * k)), minSize: round1(Math.max(3, 6 * k)), maxLines: 2, bold: true },
-    price: { on: true, source: 'price', prefix: 'RM', decimals: 2, size: round1(Math.max(4, 10 * k)) },
+    title: { on: !minimal && !barcodeOnly, mode: 'combined', size: round1(Math.max(4, 11 * k)), minSize: round1(Math.max(3, 6 * k)), maxLines: 2, bold: true },
+    price: { on: !barcodeOnly, source: 'price', prefix: 'RM', decimals: 2, size: round1(Math.max(4, 10 * k)) },
     sku: { on: false, size: round1(Math.max(3, 8 * k)) },
     custom: { on: false, text: '', size: round1(Math.max(3, 8 * k)) },
     number: { on: true, size: round1(Math.max(3, 8 * k)) },
-    barcode: { scale: 1, moduleMm: pickModuleMm(frame.w, dpi), heightMm: round1(Math.max(3, 7 * k)), quietModules: 6 },
+    barcode: { scale: 1, moduleMm: pickModuleMm(frame.w, dpi), heightMm: barcodeOnly ? round1(frame.h * 0.5) : round1(Math.max(3, 7 * k)), quietModules: 6 },
   };
 }
 
 export function configFromPreset(key) {
   const p = BUILT_IN_PRESETS.find((x) => x.key === key);
   if (!p) return null;
-  return buildConfig({ label: p.label, page: p.page, rotation: p.rotation, presetKey: p.key, minimal: p.minimal });
+  return buildConfig({ label: p.label, page: p.page, rotation: p.rotation, presetKey: p.key, minimal: p.minimal, across: p.across, acrossGap: p.acrossGap, barcodeOnly: p.barcodeOnly });
 }

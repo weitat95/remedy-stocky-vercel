@@ -2,7 +2,7 @@
 // blocking issue the user fixes (in Shopify, or by editing/removing the row). The one exception is a
 // missing price when the run allows it — those rows are skipped and listed instead.
 
-import { layoutLabel } from './layout.js';
+import { layoutLabel, rowSize } from './layout.js';
 import { sanitizeText, formatPrice, titleFor } from './text.js';
 
 export const MAX_LABELS_PER_RUN = 1000;
@@ -39,8 +39,9 @@ export function checkRows(rows, cfg, measure, { allowNoPrice = false } = {}) {
     const { bad } = sanitizeText(text);
     if (bad.length) runErrors.push(`${what} contains characters that can't be printed: ${bad.join(' ')}`);
   }
-  if (cfg.pageMode === 'custom' && (cfg.page.w < cfg.label.w - PAGE_SLACK_MM || cfg.page.h < cfg.label.h - PAGE_SLACK_MM)) {
-    runErrors.push('The label is larger than the page size — set Page size to "Same as label" (or enlarge the page)');
+  const row = rowSize(cfg);
+  if (cfg.pageMode === 'custom' && (cfg.page.w < row.w - PAGE_SLACK_MM || cfg.page.h < row.h - PAGE_SLACK_MM)) {
+    runErrors.push('The label (or the row of labels) is larger than the page size — set Page size to "Same as label" (or enlarge the page)');
   }
 
   // Duplicates by variant (or by SKU text for rows that never resolved).

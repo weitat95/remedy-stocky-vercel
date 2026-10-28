@@ -75,6 +75,15 @@ export default function TemplatePanel({
             checked={cfg.lockRatio}
             onChange={(v) => setCfg((c) => (v ? setLabelDim({ ...c, lockRatio: true }, 'w', c.label.w) : { ...c, lockRatio: false }))}
           />
+          <FormLayout.Group condensed>
+            <NumberField label="Labels across" value={cfg.across || 1} min={1} max={6} step={1}
+              helpText="2 for side-by-side stock: one printed row holds this many labels"
+              onChange={(v) => setCfg((c) => ({ ...c, across: Math.max(1, Math.min(6, Math.round(v))), presetKey: CUSTOM_PRESET_KEY }))} />
+            {(cfg.across || 1) > 1 && (
+              <NumberField label="Gap between labels" suffix="mm" value={cfg.acrossGap || 0} min={0} max={20} step={0.1}
+                onChange={(v) => setCfg((c) => ({ ...c, acrossGap: v, presetKey: CUSTOM_PRESET_KEY }))} />
+            )}
+          </FormLayout.Group>
           <Select label="Rotation" options={ROTATIONS} value={String(cfg.rotation)} onChange={(v) => setCfg((c) => ({ ...c, rotation: Number(v) }))} />
           <Select
             label="Page size (what the printer driver is set to)"

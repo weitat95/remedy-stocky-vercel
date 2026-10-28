@@ -166,9 +166,15 @@ export function maxBarcodeScale(cfg, samples, measure) {
 }
 
 // Where the label sits on the page and how reading-frame points map onto it, for the 4 rotations.
-export function pageGeometry(cfg) {
-  const page = cfg.pageMode === 'label' ? { ...cfg.label } : { ...cfg.page };
-  const lx = (page.w - cfg.label.w) / 2 + cfg.offset.x;
+// Labels printed side by side on one page ("2-up" stock): `across` labels, `acrossGap` mm between them.
+export const acrossOf = (cfg) => Math.max(1, Math.round(cfg.across || 1));
+export const rowSize = (cfg) => ({ w: acrossOf(cfg) * cfg.label.w + (acrossOf(cfg) - 1) * (cfg.acrossGap || 0), h: cfg.label.h });
+
+// `slot` (0-based) picks which of the side-by-side labels on the page to map onto.
+export function pageGeometry(cfg, slot = 0) {
+  const row = rowSize(cfg);
+  const page = cfg.pageMode === 'label' ? { ...row } : { ...cfg.page };
+  const lx = (page.w - row.w) / 2 + cfg.offset.x + slot * (cfg.label.w + (cfg.acrossGap || 0));
   const ly = (page.h - cfg.label.h) / 2 + cfg.offset.y;
   const { w: lw, h: lh } = cfg.label;
   const map = {
@@ -177,5 +183,5 @@ export function pageGeometry(cfg) {
     180: (x, y) => [lx + lw - x, ly + lh - y],
     270: (x, y) => [lx + lw - y, ly + x],
   }[cfg.rotation];
-  return { page, label: { x: lx, y: ly, w: lw, h: lh }, map, fits: page.w >= lw - 0.5 && page.h >= lh - 0.5 };
+  return { page, label: { x: lx, y: ly, w: lw, h: lh }, map, fits: page.w >= row.w - 0.5 && page.h >= row.h - 0.5 };
 }

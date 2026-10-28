@@ -1,5 +1,5 @@
 // Pure edits to a label template config, so the rules (proportional resize, preset switch) are testable.
-import { configFromPreset } from './presets.js';
+import { BUILT_IN_PRESETS, configFromPreset } from './presets.js';
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
@@ -21,6 +21,8 @@ export function setLabelDim(cfg, dim, value) {
 export function applyPreset(cfg, key) {
   const next = configFromPreset(key);
   if (!next) return cfg;
+  // A preset that dictates its fields (e.g. barcode-only) is taken whole, only the printer dpi is kept.
+  if (BUILT_IN_PRESETS.find((p) => p.key === key)?.barcodeOnly) return { ...next, printerDpi: cfg.printerDpi };
   return {
     ...next,
     printerDpi: cfg.printerDpi,

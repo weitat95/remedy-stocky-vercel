@@ -250,3 +250,20 @@ test('rows: a row still being looked up, or whose lookup failed, blocks with a c
     assert.ok(out.results.get('r1').issues[0].message.includes(text), resolution);
   }
 });
+
+test('2-up: rows of two labels in CSV order, odd total leaves the last slot blank', () => {
+  const cfg = configFromPreset('two-up-30x15');
+  assert.equal(cfg.across, 2);
+  assert.equal(cfg.title.on || cfg.price.on, false);
+  const g0 = pageGeometry(cfg, 0);
+  const g1 = pageGeometry(cfg, 1);
+  assert.equal(g0.page.w, 60);
+  assert.equal(g1.label.x - g0.label.x, 30);
+  const lay = (barcode) => layoutLabel(cfg, { title: null, price: null, sku: null, custom: null, barcode }, real);
+  const a = lay('30000444');
+  assert.ok(a.ok, JSON.stringify(a.errors));
+  const doc = renderLabelsPdf(cfg, [{ layout: a, qty: 3 }]);
+  assert.equal(doc.getNumberOfPages(), 2);
+  const gapped = { ...cfg, acrossGap: 2 };
+  assert.equal(pageGeometry(gapped, 0).page.w, 62);
+});

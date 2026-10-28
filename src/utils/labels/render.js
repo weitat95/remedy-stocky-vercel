@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf'; // named export: the default import is a namespace object under Node (tests)
-import { layoutLabel, pageGeometry } from './layout.js';
+import { acrossOf, layoutLabel, pageGeometry } from './layout.js';
 
 // Text width in mm for Helvetica, measured with a scratch jsPDF document.
 export function makeMeasure() {
@@ -31,25 +31,28 @@ function drawLabel(doc, geo, rotation, elements) {
   }
 }
 
-// jobs: [{ layout, qty }] (layouts already validated). One PDF page per label, page size = the template's
-// page size, so the printer driver sees exactly the paper it was set up for. `guides` outlines the
-// label area (preview only).
+// jobs: [{ layout, qty }] (layouts already validated). One PDF page per row of labels, page size = the
+// template's page size, so the printer driver sees exactly the paper it was set up for. With `across` > 1
+// labels fill the slots left to right in job order (continuing across jobs); an odd total leaves the last
+// slot blank. `guides` outlines each label area (preview only).
 export function renderLabelsPdf(cfg, jobs, { guides = false } = {}) {
-  const geo = pageGeometry(cfg);
-  const { page } = geo;
+  const across = acrossOf(cfg);
+  const geos = Array.from({ length: across }, (_, i) => pageGeometry(cfg, i));
+  const { page } = geos[0];
   const doc = new jsPDF({ unit: 'mm', format: [page.w, page.h], orientation: orient(page), compress: true });
-  let first = true;
-  for (const job of jobs) {
-    for (let i = 0; i < job.qty; i++) {
-      if (!first) doc.addPage([page.w, page.h], orient(page));
-      first = false;
+  const queue = [];
+  for (const job of jobs) for (let i = 0; i < job.qty; i++) queue.push(job.layout);
+  for (let p = 0; p * across < queue.length; p++) {
+    if (p > 0) doc.addPage([page.w, page.h], orient(page));
+    geos.forEach((geo, slot) => {
       if (guides) {
         doc.setDrawColor(160, 160, 160);
         doc.setLineWidth(0.1);
         doc.rect(geo.label.x, geo.label.y, geo.label.w, geo.label.h, 'S');
       }
-      drawLabel(doc, geo, cfg.rotation, job.layout.elements);
-    }
+      const layout = queue[p * across + slot];
+      if (layout) drawLabel(doc, geo, cfg.rotation, layout.elements);
+    });
   }
   return doc;
 }
@@ -58,5 +61,5 @@ export function renderLabelsPdf(cfg, jobs, { guides = false } = {}) {
 export function renderPreview(cfg, sampleData, measure, opts) {
   const layout = layoutLabel(cfg, sampleData, measure);
   if (!layout.ok) return { errors: layout.errors };
-  return { doc: renderLabelsPdf(cfg, [{ layout, qty: 1 }], opts), layout };
+  return { doc: renderLabelsPdf(cfg, [{ layout, qty: acrossOf(cfg) }], opts), layout };
 }
