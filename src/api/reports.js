@@ -25,6 +25,11 @@ export async function getLocationDailySales(params = {}) {
   return res.data;
 }
 
+export async function getPopularTimes(params = {}) {
+  const res = await apiClient.get('/reports/popular-times', { params });
+  return res.data;
+}
+
 export async function getReplenishmentReports(params = {}) {
   const res = await apiClient.get('/reports/replenishment', { params });
   return res.data;

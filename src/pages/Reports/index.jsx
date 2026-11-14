@@ -5,10 +5,13 @@ import {
   Modal, Link,
 } from '@shopify/polaris';
 import { QuestionCircleIcon } from '@shopify/polaris-icons';
+import {
+  ResponsiveContainer, ComposedChart, Bar, Line, Cell, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip,
+} from 'recharts';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useLocation, Routes, Route } from 'react-router-dom';
 import {
-  getSlowMoving, getReorderReport, getPOHistory, getStockOnHand, getLocationDailySales,
+  getSlowMoving, getReorderReport, getPOHistory, getStockOnHand, getLocationDailySales, getPopularTimes,
   getReplenishmentReports, getReplenishmentReport, runReplenishmentReport,
   getReplenishmentSettings, updateReplenishmentSettings,
 } from '../../api/reports.js';
@@ -1194,6 +1197,163 @@ function ReplenishmentReport() {
   );
 }
 
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+// Current store-local (Asia/Kuala_Lumpur) hour, to highlight "now" on the chart.
+function storeLocalHour() {
+  return Number(new Intl.DateTimeFormat('en-GB', { hour: 'numeric', hour12: false, timeZone: 'Asia/Kuala_Lumpur' }).format(new Date())) % 24;
+}
+
+// Which weekdays a "Weekday" selection averages across (0 = Sunday).
+const DAY_GROUPS = {
+  all: { label: 'All days', dows: [0, 1, 2, 3, 4, 5, 6], plural: 'days' },
+  weekdays: { label: 'Weekdays (Mon–Fri)', dows: [1, 2, 3, 4, 5], plural: 'weekdays' },
+  weekends: { label: 'Weekends (Sat–Sun)', dows: [0, 6], plural: 'weekend days' },
+};
+const dayGroup = (sel) => DAY_GROUPS[sel] || { label: WEEKDAYS[sel], dows: [Number(sel)], plural: `${WEEKDAYS[sel]}s` };
+
+const hourLabel = (h) => `${String(h).padStart(2, '0')}:00`;
+
+// "Popular times" per location: average arrivals (people_in) per hour for a weekday over the last
+// N weeks, from counter_hourly. Arrivals only — people_in - people_out drifts with miscounts, so
+// it's deliberately not shown as a headcount.
+function PopularTimesReport() {
+  const [locationId, setLocationId] = useState('');
+  const [dow, setDow] = useState(null); // weekday '0'-'6' or all|weekdays|weekends; null = today's weekday once data loads
+  const [weeks, setWeeks] = useState('8');
+  const [metric, setMetric] = useState('in'); // 'in' = people in, 'min' = min(in, out)
+
+  const { data: locationsData } = useQuery({ queryKey: ['locations'], queryFn: getLocations });
+  const locations = locationsData?.data || [];
+  const activeLocationId = locationId || locations[0]?.id || '';
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['reports', 'popular-times', activeLocationId, weeks, metric],
+    queryFn: () => getPopularTimes({ locationId: activeLocationId, weeks, metric }),
+    enabled: !!activeLocationId,
+  });
+  const pt = data?.data;
+
+  const selectedDow = dow ?? String(pt?.todayDow ?? new Date().getDay());
+  const group = dayGroup(selectedDow);
+  const isToday = pt != null && group.dows.includes(pt.todayDow);
+  const nowHour = storeLocalHour();
+
+  // Pool the selected weekdays: sample-weighted mean of each weekday's per-hour average.
+  const pooled = new Map();
+  for (const d of group.dows) {
+    for (const c of pt?.byDow?.[d] || []) {
+      const cell = pooled.get(c.hour) || { sum: 0, samples: 0 };
+      cell.sum += c.avgIn * c.samples;
+      cell.samples += c.samples;
+      pooled.set(c.hour, cell);
+    }
+  }
+  const typical = new Map([...pooled]
+    .filter(([, c]) => pt && c.samples >= pt.minSamples)
+    .map(([hour, c]) => [hour, { avgIn: Number((c.sum / c.samples).toFixed(2)), samples: c.samples }]));
+  const todayByHour = new Map(isToday ? pt.todayHours.map((h) => [h.hour, h.peopleIn]) : []);
+  const lastTodayHour = todayByHour.size ? Math.max(...todayByHour.keys()) : null;
+
+  const hours = [...typical.keys(), ...todayByHour.keys()];
+  const chartData = hours.length
+    ? Array.from({ length: Math.max(...hours) - Math.min(...hours) + 1 }, (_, i) => {
+        const h = Math.min(...hours) + i;
+        return {
+          hour: h,
+          label: hourLabel(h),
+          typical: typical.get(h)?.avgIn ?? null,
+          samples: typical.get(h)?.samples ?? 0,
+          today: todayByHour.has(h) ? todayByHour.get(h) : null,
+        };
+      })
+    : [];
+
+  const syncedAt = pt?.lastSyncedAt
+    ? new Date(pt.lastSyncedAt).toLocaleString('en-GB', { timeZone: 'Asia/Kuala_Lumpur', dateStyle: 'medium', timeStyle: 'short' })
+    : null;
+
+  return (
+    <BlockStack gap="400">
+      <InlineStack gap="300" blockAlign="center" wrap>
+        <Select
+          label="Location" labelInline
+          options={locations.map((l) => ({ label: l.name, value: l.id }))}
+          value={activeLocationId} onChange={setLocationId}
+        />
+        <Select
+          label="Weekday" labelInline
+          options={[
+            ...WEEKDAYS.map((d, i) => ({ label: d, value: String(i) })),
+            ...Object.entries(DAY_GROUPS).map(([value, g]) => ({ label: g.label, value })),
+          ]}
+          value={selectedDow} onChange={setDow}
+        />
+        <Select
+          label="Weeks" labelInline
+          options={[4, 8, 12, 26].map((n) => ({ label: `Last ${n} weeks`, value: String(n) }))}
+          value={weeks} onChange={setWeeks}
+        />
+        <Select
+          label="Count" labelInline
+          options={[
+            { label: 'People in', value: 'in' },
+            { label: 'Min of in / out', value: 'min' },
+          ]}
+          value={metric} onChange={setMetric}
+        />
+      </InlineStack>
+      <Text as="p" tone="subdued">
+        Average {metric === 'min' ? 'visitors (lower of people in / out)' : 'arrivals (people in)'} per hour across {group.plural}, store-local time. Hours with no counter
+        data are skipped, not counted as zero.{syncedAt ? ` Today synced as of ${syncedAt}.` : ''}
+      </Text>
+      {error ? <Banner tone="critical">{error.message}</Banner> : null}
+      {isLoading ? <Spinner /> : pt && pt.deviceCount === 0 ? (
+        <Banner tone="info">No counter device is mapped to this location. Assign one on the Devices page.</Banner>
+      ) : pt && chartData.length === 0 ? (
+        <EmptyState heading="Not enough data yet" image="">
+          <p>
+            Needs at least {pt.minSamples} {group.plural} of hourly data per hour. Hourly history
+            started on 2026-11-14 and the counter syncs a few times a day.
+          </p>
+        </EmptyState>
+      ) : pt ? (
+        <>
+          <div style={{ width: '100%', height: 320 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                <ChartTooltip
+                  formatter={(v, name, item) => (name === 'typical'
+                    ? [`${v} (${item.payload.samples} ${group.plural})`, metric === 'min' ? 'Typical visitors' : 'Typical arrivals']
+                    : [v, item.payload.hour === lastTodayHour ? 'Today (partial hour)' : 'Today'])}
+                />
+                <Bar dataKey="typical" name="typical" fill="#b5d9cf" radius={[3, 3, 0, 0]}>
+                  {chartData.map((d) => (
+                    <Cell key={d.hour} fill={isToday && d.hour === nowHour ? '#008060' : '#b5d9cf'} />
+                  ))}
+                </Bar>
+                {isToday && (
+                  <Line dataKey="today" name="today" stroke="#2c6ecb" strokeWidth={2} dot={{ r: 3 }} connectNulls={false} />
+                )}
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+          <Text as="p" tone="subdued" variant="bodySm">
+            {isToday
+              ? `Dark bar = the current hour (${hourLabel(nowHour)}). Blue line = today so far, up to the last sync${
+                  lastTodayHour != null ? `; ${hourLabel(lastTodayHour)} is still partial` : ''
+                } — the counter reports in batches, so nothing is live. Crossings are attributed to the hour the device's 5-minute report arrived in.`
+              : 'Crossings are attributed to the hour the device\'s 5-minute report arrived in (up to ~5 min off at hour boundaries).'}
+          </Text>
+        </>
+      ) : null}
+    </BlockStack>
+  );
+}
+
 function Placeholder({ title }) {
   return <EmptyState heading={`${title} coming soon`} image=""><p>This report is not yet implemented.</p></EmptyState>;
 }
@@ -1204,6 +1364,7 @@ const TABS = [
   { id: 'stock-on-hand', content: 'Stock on Hand', path: 'stock-on-hand' },
   { id: 'purchase-orders', content: 'Purchase Orders', path: 'purchase-orders' },
   { id: 'foot-traffic', content: 'Foot Traffic', path: 'foot-traffic' },
+  { id: 'popular-times', content: 'Popular Times', path: 'popular-times' },
   { id: 'replenishment', content: 'Replenishment', path: 'replenishment' },
   { id: 'abc', content: 'ABC Analysis', path: 'abc' },
   { id: 'best-sellers', content: 'Best Sellers', path: 'best-sellers' },
@@ -1229,6 +1390,7 @@ export default function Reports() {
       case 'stock-on-hand': return <StockOnHandReport />;
       case 'purchase-orders': return <POHistoryReport />;
       case 'foot-traffic': return <FootTrafficReport />;
+      case 'popular-times': return <PopularTimesReport />;
       case 'replenishment': return <ReplenishmentReport />;
       default: return <Placeholder title={TABS[activeTab]?.content} />;
     }

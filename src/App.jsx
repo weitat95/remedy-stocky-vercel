@@ -264,6 +264,13 @@ export default function App() {
             selected: is('/reports/foot-traffic'),
           },
           {
+            label: 'Popular Times',
+            icon: PersonIcon,
+            url: '/reports/popular-times',
+            onClick: () => navigate('/reports/popular-times'),
+            selected: is('/reports/popular-times'),
+          },
+          {
             label: 'Low Stock',
             icon: InventoryIcon,
             url: '/reports/low-stock',
