@@ -1,11 +1,11 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   Page, Layout, Card, IndexTable, Text, Button, Badge,
   InlineStack, BlockStack, Banner, Spinner, Pagination, Box, Tabs,
-  Modal, TextField, ResourceList, ResourceItem,
+  Modal, TextField, ResourceList, ResourceItem, Select,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { getAdjustments, deleteAdjustment } from '../../api/adjustments.js';
 import {
   getAdjustmentReasons, createAdjustmentReason,
@@ -15,7 +15,17 @@ import {
 const TABS = [
   { id: 'open', content: 'Open' },
   { id: 'archived', content: 'Archived' },
+  { id: 'all', content: 'All' },
 ];
+
+function useDebounced(value, ms = 400) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
 
 function fmtDate(d) {
   if (!d) return '—';
@@ -35,11 +45,24 @@ export default function Adjustments() {
   const [cursor, setCursor] = useState(null);
   const pageNum = cursorStack.length + 1;
 
-  const handleTabChange = useCallback((idx) => {
-    setSelectedTab(idx);
+  const resetPaging = useCallback(() => {
     setCursorStack([]);
     setCursor(null);
   }, []);
+
+  const handleTabChange = useCallback((idx) => {
+    setSelectedTab(idx);
+    resetPaging();
+  }, [resetPaging]);
+
+  // ── Filters ───────────────────────────────────────────────────────────────
+  const [skuInput, setSkuInput] = useState('');
+  const [notesInput, setNotesInput] = useState('');
+  const [reasonFilter, setReasonFilter] = useState('');
+  const skuFilter = useDebounced(skuInput.trim());
+  const notesFilter = useDebounced(notesInput.trim());
+  useEffect(() => { resetPaging(); }, [skuFilter, notesFilter, reasonFilter, resetPaging]);
+  const hasFilters = !!(skuInput || notesInput || reasonFilter);
 
   const handleNext = useCallback((endCursor) => {
     setCursorStack((prev) => [...prev, cursor]);
@@ -55,10 +78,18 @@ export default function Adjustments() {
   }, []);
 
   // ── Query ─────────────────────────────────────────────────────────────────
-  const queryKey = ['adjustments', tab, cursor];
+  const queryKey = ['adjustments', tab, cursor, skuFilter, reasonFilter, notesFilter];
   const { data, isLoading, error } = useQuery({
     queryKey,
-    queryFn: () => getAdjustments({ tab, first: 50, after: cursor || undefined }),
+    queryFn: () => getAdjustments({
+      tab,
+      first: 50,
+      after: cursor || undefined,
+      sku: skuFilter || undefined,
+      reason: reasonFilter || undefined,
+      notes: notesFilter || undefined,
+    }),
+    placeholderData: keepPreviousData,
   });
 
   const adjustments = data?.adjustments ?? [];
@@ -135,7 +166,7 @@ export default function Adjustments() {
     { id: 'notes', title: 'Notes' },
     { id: 'adjustedBy', title: 'Adjusted by' },
     { id: 'adjustedAt', title: 'Adjusted at' },
-    { id: 'variants', title: 'Variants' },
+    { id: 'variants', title: skuFilter ? 'Matching SKUs' : 'Variants' },
     { id: 'actions', title: '' },
   ];
 
@@ -162,6 +193,49 @@ export default function Adjustments() {
           <Card padding="0">
             <Tabs tabs={TABS} selected={selectedTab} onSelect={handleTabChange} fitted />
 
+            <Box padding="300">
+              <InlineStack gap="300" blockAlign="end" wrap>
+                <div style={{ minWidth: 200 }}>
+                  <TextField
+                    label="SKU"
+                    value={skuInput}
+                    onChange={setSkuInput}
+                    autoComplete="off"
+                    placeholder="Contains…"
+                    clearButton
+                    onClearButtonClick={() => setSkuInput('')}
+                  />
+                </div>
+                <div style={{ minWidth: 200 }}>
+                  <Select
+                    label="Reason code"
+                    value={reasonFilter}
+                    onChange={setReasonFilter}
+                    options={[
+                      { label: 'Any reason', value: '' },
+                      ...reasonPresets.map((p) => ({ label: `${p.code} — ${p.label}`, value: p.code })),
+                    ]}
+                  />
+                </div>
+                <div style={{ minWidth: 240 }}>
+                  <TextField
+                    label="Notes"
+                    value={notesInput}
+                    onChange={setNotesInput}
+                    autoComplete="off"
+                    placeholder="Contains…"
+                    clearButton
+                    onClearButtonClick={() => setNotesInput('')}
+                  />
+                </div>
+                {hasFilters && (
+                  <Button onClick={() => { setSkuInput(''); setNotesInput(''); setReasonFilter(''); }}>
+                    Clear filters
+                  </Button>
+                )}
+              </InlineStack>
+            </Box>
+
             {isLoading ? (
               <Box padding="800">
                 <InlineStack align="center"><Spinner /></InlineStack>
@@ -187,6 +261,11 @@ export default function Adjustments() {
                     <IndexTable.Cell>
                       <InlineStack gap="150" blockAlign="center">
                         <Text>{reasonLabelByCode[adj.reason] ?? adj.reason}</Text>
+                        {tab === 'all' && (
+                          <Badge size="small" tone={adj.status === 'archived' ? 'success' : undefined}>
+                            {adj.status === 'archived' ? 'Applied' : 'Open'}
+                          </Badge>
+                        )}
                         {adj.reversalOf && <Badge tone="info" size="small">Reversal of #{adj.reversalOf.adjNumber}</Badge>}
                         {adj.reversal && <Badge tone="attention" size="small">Reversed</Badge>}
                       </InlineStack>
@@ -205,7 +284,14 @@ export default function Adjustments() {
                     </IndexTable.Cell>
 
                     <IndexTable.Cell>
-                      <Text tone="subdued">{adj.variantCount}</Text>
+                      {skuFilter && adj.matchedItems ? (
+                        <Text tone="subdued">
+                          {adj.matchedItems.map((m) => `${m.sku} (${m.delta > 0 ? '+' : ''}${m.delta})`).join(', ')}
+                          {' '}· {adj.variantCount} total
+                        </Text>
+                      ) : (
+                        <Text tone="subdued">{adj.variantCount}</Text>
+                      )}
                     </IndexTable.Cell>
 
                     <IndexTable.Cell>
