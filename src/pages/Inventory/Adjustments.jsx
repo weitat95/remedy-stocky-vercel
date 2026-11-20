@@ -58,11 +58,13 @@ export default function Adjustments() {
   // ── Filters ───────────────────────────────────────────────────────────────
   const [skuInput, setSkuInput] = useState('');
   const [notesInput, setNotesInput] = useState('');
+  const [adjInput, setAdjInput] = useState('');
   const [reasonFilter, setReasonFilter] = useState('');
   const skuFilter = useDebounced(skuInput.trim());
   const notesFilter = useDebounced(notesInput.trim());
-  useEffect(() => { resetPaging(); }, [skuFilter, notesFilter, reasonFilter, resetPaging]);
-  const hasFilters = !!(skuInput || notesInput || reasonFilter);
+  const adjFilter = useDebounced(adjInput.trim());
+  useEffect(() => { resetPaging(); }, [skuFilter, notesFilter, reasonFilter, adjFilter, resetPaging]);
+  const hasFilters = !!(skuInput || notesInput || reasonFilter || adjInput);
 
   const handleNext = useCallback((endCursor) => {
     setCursorStack((prev) => [...prev, cursor]);
@@ -78,13 +80,14 @@ export default function Adjustments() {
   }, []);
 
   // ── Query ─────────────────────────────────────────────────────────────────
-  const queryKey = ['adjustments', tab, cursor, skuFilter, reasonFilter, notesFilter];
+  const queryKey = ['adjustments', tab, cursor, skuFilter, reasonFilter, notesFilter, adjFilter];
   const { data, isLoading, error } = useQuery({
     queryKey,
     queryFn: () => getAdjustments({
       tab,
       first: 50,
       after: cursor || undefined,
+      adjNumber: adjFilter || undefined,
       sku: skuFilter || undefined,
       reason: reasonFilter || undefined,
       notes: notesFilter || undefined,
@@ -195,6 +198,17 @@ export default function Adjustments() {
 
             <Box padding="300">
               <InlineStack gap="300" blockAlign="end" wrap>
+                <div style={{ minWidth: 140 }}>
+                  <TextField
+                    label="Adjustment #"
+                    value={adjInput}
+                    onChange={setAdjInput}
+                    autoComplete="off"
+                    placeholder="123 or 12*"
+                    clearButton
+                    onClearButtonClick={() => setAdjInput('')}
+                  />
+                </div>
                 <div style={{ minWidth: 200 }}>
                   <TextField
                     label="SKU"
@@ -229,7 +243,7 @@ export default function Adjustments() {
                   />
                 </div>
                 {hasFilters && (
-                  <Button onClick={() => { setSkuInput(''); setNotesInput(''); setReasonFilter(''); }}>
+                  <Button onClick={() => { setSkuInput(''); setNotesInput(''); setAdjInput(''); setReasonFilter(''); }}>
                     Clear filters
                   </Button>
                 )}
