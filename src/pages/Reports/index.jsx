@@ -861,22 +861,24 @@ function ReplenishmentReport() {
       const g = { group: id, groupLabel: destName(id) };
       return [
         { ...g, key: `max:${id}`, heading: 'Max Qty', numeric: true, get: (li) => li.perDest[id]?.maxStock },
-        { ...g, key: `qty:${id}`, heading: 'Store Qty', numeric: true, sum: true, get: (li) => li.perDest[id]?.destQty },
+        { ...g, key: `qty:${id}`, heading: 'Op. Store Qty', numeric: true, sum: true, get: (li) => li.perDest[id]?.destQty },
         ...(multi ? [{ ...g, key: `sold:${id}`, heading: 'Sold Qty', numeric: true, sum: true, get: (li) => li.perDest[id]?.soldQty }] : []),
         { ...g, key: `repl:${id}`, heading: 'REPL QTY', numeric: true, repl: true, sum: true, get: (li) => li.perDest[id]?.replQty },
-        // Store stock after replenishment; empty when the warehouse has nothing (Op. Bal 0/empty) or there is no REPL figure.
+        // Store stock after replenishment; equals Op. Store Qty when the warehouse has nothing (Op. Bal 0/empty); empty when there is no REPL figure.
         {
-          ...g, key: `after:${id}`, heading: 'Store Qty', numeric: true, sum: true,
+          ...g, key: `after:${id}`, heading: 'Cl. Store Qty', numeric: true, sum: true,
           get: (li) => {
             const repl = li.perDest[id]?.replQty;
-            return !li.sourceQty || typeof repl !== 'number' ? null : (li.perDest[id]?.destQty ?? 0) + repl;
+            const open = li.perDest[id]?.destQty ?? 0;
+            if (!li.sourceQty) return open;
+            return typeof repl !== 'number' ? null : open + repl;
           },
         },
       ];
     }),
     // Same summary group regardless of store count, so the layout doesn't shift.
     { group: 'summary', groupLabel: 'Warehouse', key: 'replTotal', heading: 'Total REPL', numeric: true, repl: true, sum: true, get: (li) => li.replTotal },
-    { group: 'summary', groupLabel: 'Warehouse', key: 'endStock', heading: 'WH', numeric: true, sum: true, get: (li) => li.endStock },
+    { group: 'summary', groupLabel: 'Warehouse', key: 'endStock', heading: 'Cl. Bal', numeric: true, sum: true, get: (li) => li.endStock },
   ];
   // Contiguous runs of columns sharing a group -> one band cell each (colSpan).
   const groupBands = [];

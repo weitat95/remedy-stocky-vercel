@@ -43,8 +43,8 @@ export async function downloadReplenishmentXlsx({ filename, sheetTitle, meta, de
   const HEAD_ROW = 7;
   const FIRST_COL_FIXED = 5; // Vendor, SKU, Product, Variant, Op. Bal
   // Store Qty appears twice: before replenishment (as in Shopify) and after adding REPL QTY.
-  const perStore = ['Max Qty', 'Sold Qty', 'Store Qty', 'REPL QTY', 'Store Qty'];
-  const CLOSING_HEADING = 'WH';
+  const perStore = ['Max Qty', 'Sold Qty', 'Op. Store Qty', 'REPL QTY', 'Cl. Store Qty'];
+  const CLOSING_HEADING = 'Cl. Bal';
 
   const headings = ['Vendor', 'SKU', 'Product', 'Variant', 'Op. Bal'];
   dests.forEach(() => headings.push(...perStore));
@@ -87,13 +87,13 @@ export async function downloadReplenishmentXlsx({ filename, sheetTitle, meta, de
     dests.forEach((d) => {
       const p = li.perDest[d.id] || {};
       row.push(num(p.maxStock), num(p.soldQty), num(p.destQty), num(p.replQty));
-      // Store Qty after replenishment: blank when the warehouse has nothing (Op. Bal 0 / empty) or there is no REPL figure.
+      // Store Qty after replenishment: equals Op. Store Qty when the warehouse has nothing (Op. Bal 0 / empty); blank when there is no REPL figure.
       const storeCol = colLetter(row.length - 1);
       const replCol = colLetter(row.length);
-      const blank = !opBal || typeof p.replQty !== 'number';
+      const blank = !!opBal && typeof p.replQty !== 'number';
       row.push({
-        formula: `IF(OR(N($E${r})=0,NOT(ISNUMBER(${replCol}${r}))),"",N(${storeCol}${r})+${replCol}${r})`,
-        result: blank ? '' : (p.destQty ?? 0) + p.replQty,
+        formula: `IF(N($E${r})=0,N(${storeCol}${r}),IF(ISNUMBER(${replCol}${r}),N(${storeCol}${r})+${replCol}${r},""))`,
+        result: blank ? '' : (p.destQty ?? 0) + (opBal ? p.replQty : 0),
       });
     });
     row.push(num(li.replTotal), num(li.endStock));
