@@ -49,10 +49,59 @@ import DraftOrders from './pages/DraftOrders/index.jsx';
 import Devices from './pages/Devices/index.jsx';
 import Reports from './pages/Reports/index.jsx';
 
+const APP_TITLE = 'Stocky';
+
+// Longest matching prefix wins, so list specific paths freely.
+const PAGE_TITLES = {
+  '/': 'Dashboard',
+  '/vendors': 'Vendors',
+  '/suppliers': 'Suppliers',
+  '/locations': 'Locations',
+  '/devices': 'Devices',
+  '/purchase-orders': 'Purchases',
+  '/orders': 'Orders',
+  '/draft-orders': 'Draft Orders',
+  '/inventory/products': 'Products',
+  '/inventory/max-quantity': 'Max Quantity',
+  '/inventory/labels': 'Labels',
+  '/inventory/vendor-rrp': 'Vendor RRP',
+  '/inventory/vendor-margins': 'Vendor Margins',
+  '/inventory/adjustments': 'Adjustments',
+  '/price-scheduler': 'Price Scheduler',
+  '/transfers': 'Transfers',
+  '/consignment': 'Consignment',
+  '/consignment/sales-by-vendor': 'Sales by Vendor',
+  '/reports': 'Reports',
+  '/reports/low-stock': 'Low Stock',
+  '/reports/reorder': 'Reorder',
+  '/reports/stock-on-hand': 'Stock on Hand',
+  '/reports/purchase-orders': 'Purchase Orders Report',
+  '/reports/foot-traffic': 'Foot Traffic',
+  '/reports/popular-times': 'Popular Times',
+  '/reports/replenishment': 'Replenishment',
+  '/reports/abc': 'ABC Analysis',
+  '/reports/best-sellers': 'Best Sellers',
+  '/reports/orders': 'Orders Report',
+  '/reports/profit': 'Profit',
+};
+
+function titleForPath(pathname) {
+  let best = null;
+  for (const p of Object.keys(PAGE_TITLES)) {
+    const match = p === '/' ? pathname === '/' : pathname === p || pathname.startsWith(`${p}/`);
+    if (match && (best === null || p.length > best.length)) best = p;
+  }
+  return best ? `${PAGE_TITLES[best]} — ${APP_TITLE}` : `${APP_TITLE} — Inventory Manager`;
+}
+
 export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    document.title = titleForPath(location.pathname);
+  }, [location.pathname]);
   const [mobileNavActive, setMobileNavActive] = useState(false);
   const [userMenuActive, setUserMenuActive] = useState(false);
   const topBarLogoSrc = useLogoSrc('white'); // TopBar background is dark
