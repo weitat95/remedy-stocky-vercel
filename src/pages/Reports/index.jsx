@@ -38,6 +38,57 @@ function isoDaysAgo(days) {
   return d.toISOString().slice(0, 10);
 }
 
+// ---- Foot Traffic date presets (store-local Asia/Kuala_Lumpur, fixed UTC+8) ----
+const STORE_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
+const dayMs = 24 * 60 * 60 * 1000;
+function ymd(ms) { return new Date(ms).toISOString().slice(0, 10); }
+function storeTodayMs() {
+  // midnight UTC of the store-local calendar date
+  return Date.parse(`${new Date(Date.now() + STORE_TZ_OFFSET_MS).toISOString().slice(0, 10)}T00:00:00Z`);
+}
+// Rolling ranges end yesterday (today's sales/traffic are partial); calendar ranges are whole periods.
+const FOOT_TRAFFIC_PRESETS = [
+  { value: 'custom', label: 'Custom' },
+  { value: 'yesterday', label: 'Yesterday' },
+  { value: 'this_week', label: 'This week (Mon–today)' },
+  { value: 'this_month', label: 'This month (to today)' },
+  { value: 'last_week', label: 'Last week (Mon–Sun)' },
+  { value: 'last_month', label: 'Last month' },
+  { value: 'last_quarter', label: 'Last quarter' },
+  { value: 'last_year', label: 'Last year' },
+  { value: 'last_7', label: 'Last 7 days' },
+  { value: 'last_14', label: 'Last 14 days' },
+  { value: 'last_30', label: 'Last 30 days' },
+  { value: 'last_90', label: 'Last 90 days' },
+  { value: 'last_365', label: 'Last 365 days' },
+];
+function footTrafficPresetRange(key) {
+  const today = storeTodayMs();
+  const t = new Date(today);
+  const y = t.getUTCFullYear();
+  const m = t.getUTCMonth();
+  const monOffset = (t.getUTCDay() + 6) % 7; // days since Monday
+  const rolling = (n) => ({ from: ymd(today - n * dayMs), to: ymd(today - dayMs) });
+  switch (key) {
+    case 'yesterday': return { from: ymd(today - dayMs), to: ymd(today - dayMs) };
+    case 'this_week': return { from: ymd(today - monOffset * dayMs), to: ymd(today) };
+    case 'this_month': return { from: ymd(Date.UTC(y, m, 1)), to: ymd(today) };
+    case 'last_week': return { from: ymd(today - (monOffset + 7) * dayMs), to: ymd(today - (monOffset + 1) * dayMs) };
+    case 'last_month': return { from: ymd(Date.UTC(y, m - 1, 1)), to: ymd(Date.UTC(y, m, 0)) };
+    case 'last_quarter': {
+      const qStart = Math.floor(m / 3) * 3;
+      return { from: ymd(Date.UTC(y, qStart - 3, 1)), to: ymd(Date.UTC(y, qStart, 0)) };
+    }
+    case 'last_year': return { from: ymd(Date.UTC(y - 1, 0, 1)), to: ymd(Date.UTC(y - 1, 11, 31)) };
+    case 'last_7': return rolling(7);
+    case 'last_14': return rolling(14);
+    case 'last_30': return rolling(30);
+    case 'last_90': return rolling(90);
+    case 'last_365': return rolling(365);
+    default: return null;
+  }
+}
+
 function SlowMovingReport() {
   const [days, setDays] = useState('90');
   const { data, isLoading, error } = useQuery({
@@ -256,6 +307,7 @@ function heatBackground(value, max) {
 function FootTrafficReport() {
   const [from, setFrom] = useState(() => isoDaysAgo(30));
   const [to, setTo] = useState(() => isoDaysAgo(0));
+  const [preset, setPreset] = useState('custom');
   const [locationId, setLocationId] = useState('all');
   const [page, setPage] = useState(0);
   const [sortIndex, setSortIndex] = useState(0); // Date
@@ -394,13 +446,23 @@ function FootTrafficReport() {
           </Text>
         </BlockStack>
         <InlineStack gap="200" blockAlign="center">
+          <Select
+            label="Period" labelInline
+            options={FOOT_TRAFFIC_PRESETS}
+            value={preset}
+            onChange={(v) => {
+              setPreset(v);
+              const r = footTrafficPresetRange(v);
+              if (r) { setFrom(r.from); setTo(r.to); setPage(0); }
+            }}
+          />
           <InlineStack gap="100" blockAlign="center" wrap={false}>
             <Text as="span" tone="subdued">From</Text>
-            <TextField labelHidden label="From" type="date" value={from} onChange={(v) => { setFrom(v); setPage(0); }} autoComplete="off" />
+            <TextField labelHidden label="From" type="date" value={from} onChange={(v) => { setFrom(v); setPreset('custom'); setPage(0); }} autoComplete="off" />
           </InlineStack>
           <InlineStack gap="100" blockAlign="center" wrap={false}>
             <Text as="span" tone="subdued">To</Text>
-            <TextField labelHidden label="To" type="date" value={to} onChange={(v) => { setTo(v); setPage(0); }} autoComplete="off" />
+            <TextField labelHidden label="To" type="date" value={to} onChange={(v) => { setTo(v); setPreset('custom'); setPage(0); }} autoComplete="off" />
           </InlineStack>
           <Select label="Location" labelInline options={locationOptions} value={locationId} onChange={(v) => { setLocationId(v); setPage(0); }} />
           <Select
