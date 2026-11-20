@@ -49,7 +49,7 @@ function buildRows(report) {
   }
   const bold = (v) => <Text as="span" fontWeight="semibold">{v}</Text>;
   const blank = (n) => Array(n).fill('');
-  const COLS = 12;
+  const COLS = 13;
   for (const [loc, lines] of groups) {
     rows.push([bold(loc), ...blank(COLS - 1)]);
     let q = 0; let n = 0; let m = 0; let p = 0;
@@ -59,14 +59,15 @@ function buildRows(report) {
         l.orderDate, l.orderName, l.locationName, l.vendor, l.productTitle, l.variantTitle, l.sku || '—',
         <>{rm(l.rrp)}{l.rrpDerived && <> <Badge tone="attention">from cost</Badge></>}</>,
         l.quantity,
+        l.inventoryQty ?? '—',
         <>{rm(l.netSales)}{l.discountRatio != null && l.discountRatio < 1 && <Text as="span" tone="subdued"> ({Math.round(l.discountRatio * 100)}%)</Text>}</>,
         rm(l.margin), rm(l.payable),
       ]);
     }
-    rows.push([bold(`Subtotal ${loc}`), ...blank(7), bold(q), bold(rm(n)), bold(rm(m)), bold(rm(p))]);
+    rows.push([bold(`Subtotal ${loc}`), ...blank(7), bold(q), '', bold(rm(n)), bold(rm(m)), bold(rm(p))]);
   }
   const t = report.totals;
-  rows.push([bold('TOTAL'), ...blank(7), bold(t.quantity), bold(rm(t.netSales)), bold(rm(t.margin)), bold(rm(t.payable))]);
+  rows.push([bold('TOTAL'), ...blank(7), bold(t.quantity), '', bold(rm(t.netSales)), bold(rm(t.margin)), bold(rm(t.payable))]);
   return rows;
 }
 
@@ -115,8 +116,8 @@ function PreviewBody({ report, locationName }) {
       ) : (
         <Card padding="0">
           <DataTable
-            columnContentTypes={['text', 'text', 'text', 'text', 'text', 'text', 'text', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric']}
-            headings={['Date', 'Order', 'Location', 'Vendor', 'Product', 'Variant', 'SKU', 'RRP', 'Qty', 'Net sales', 'Margin', 'Payable']}
+            columnContentTypes={['text', 'text', 'text', 'text', 'text', 'text', 'text', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric']}
+            headings={['Date', 'Order', 'Location', 'Vendor', 'Product', 'Variant', 'SKU', 'RRP', 'Net Quantity Sold', 'Inventory Quantity', 'Net sales', 'Margin', 'Payable']}
             rows={rows}
             hideScrollIndicator
           />
