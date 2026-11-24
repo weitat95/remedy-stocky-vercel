@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import {
   Page, Card, Tabs, DataTable, Text, Badge, Spinner, Button, Checkbox,
   Banner, EmptyState, InlineStack, BlockStack, Select, TextField, Tooltip, Icon, Pagination, Box, InlineGrid, Toast,
-  Modal, Link,
+  Modal, Link, ButtonGroup,
 } from '@shopify/polaris';
 import { QuestionCircleIcon } from '@shopify/polaris-icons';
 import {
@@ -11,7 +11,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useLocation, Routes, Route } from 'react-router-dom';
 import {
-  getSlowMoving, getReorderReport, getPOHistory, getStockOnHand, getLocationDailySales, getPopularTimes,
+  getSlowMoving, getReorderReport, getPOHistory, getStockOnHand, getLocationDailySales, getPopularTimes, getPopularTimesDaily,
   getReplenishmentReports, getReplenishmentReport, runReplenishmentReport,
   getReplenishmentSettings, updateReplenishmentSettings,
 } from '../../api/reports.js';
@@ -1281,7 +1281,7 @@ const hourLabel = (h) => `${String(h).padStart(2, '0')}:00`;
 // "Popular times" per location: average arrivals (people_in) per hour for a weekday over the last
 // N weeks, from counter_hourly. Arrivals only — people_in - people_out drifts with miscounts, so
 // it's deliberately not shown as a headcount.
-function PopularTimesReport() {
+function PopularTimesHourly() {
   const [locationId, setLocationId] = useState('');
   const [dow, setDow] = useState(null); // weekday '0'-'6' or all|weekdays|weekends; null = today's weekday once data loads
   const [weeks, setWeeks] = useState('8');
@@ -1414,6 +1414,128 @@ function PopularTimesReport() {
           </Text>
         </>
       ) : null}
+    </BlockStack>
+  );
+}
+
+// Daily view: average daily visitors per weekday over a date range, from counter_events daily
+// totals (history predates counter_hourly). Days with no counter row are skipped, not zero.
+function PopularTimesDaily() {
+  const [locationId, setLocationId] = useState('');
+  const [preset, setPreset] = useState('last_90');
+  const [{ from, to }, setRange] = useState(() => footTrafficPresetRange('last_90'));
+  const [metric, setMetric] = useState('min');
+
+  const { data: locationsData } = useQuery({ queryKey: ['locations'], queryFn: getLocations });
+  const locations = locationsData?.data || [];
+  const activeLocationId = locationId || locations[0]?.id || '';
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['reports', 'popular-times-daily', activeLocationId, from, to, metric],
+    queryFn: () => getPopularTimesDaily({ locationId: activeLocationId, from, to, metric }),
+    enabled: !!activeLocationId && !!from && !!to,
+  });
+  const pt = data?.data;
+
+  const order = [1, 2, 3, 4, 5, 6, 0]; // Mon–Sun
+  const chartData = order.map((d) => {
+    const c = pt?.byDow?.[d];
+    const ok = c && c.samples >= pt.minSamples;
+    return { label: WEEKDAYS[d].slice(0, 3), avg: ok ? c.avg : null, samples: c?.samples ?? 0 };
+  });
+  const groupAvg = (dows) => {
+    let sum = 0; let n = 0;
+    for (const d of dows) {
+      const c = pt?.byDow?.[d];
+      if (c && c.samples >= pt.minSamples) { sum += c.avg * c.samples; n += c.samples; }
+    }
+    return n ? (sum / n).toFixed(1) : '—';
+  };
+  const hasData = chartData.some((d) => d.avg != null);
+  const peak = hasData ? Math.max(...chartData.map((d) => d.avg ?? -1)) : null;
+
+  return (
+    <BlockStack gap="400">
+      <InlineStack gap="300" blockAlign="center" wrap>
+        <Select
+          label="Location" labelInline
+          options={locations.map((l) => ({ label: l.name, value: l.id }))}
+          value={activeLocationId} onChange={setLocationId}
+        />
+        <Select
+          label="Period" labelInline options={FOOT_TRAFFIC_PRESETS} value={preset}
+          onChange={(v) => { setPreset(v); const r = footTrafficPresetRange(v); if (r) setRange(r); }}
+        />
+        <InlineStack gap="100" blockAlign="center" wrap={false}>
+          <Text as="span" tone="subdued">From</Text>
+          <TextField labelHidden label="From" type="date" value={from} onChange={(v) => { setRange((r) => ({ ...r, from: v })); setPreset('custom'); }} autoComplete="off" />
+        </InlineStack>
+        <InlineStack gap="100" blockAlign="center" wrap={false}>
+          <Text as="span" tone="subdued">To</Text>
+          <TextField labelHidden label="To" type="date" value={to} onChange={(v) => { setRange((r) => ({ ...r, to: v })); setPreset('custom'); }} autoComplete="off" />
+        </InlineStack>
+        <Select
+          label="Count" labelInline
+          options={[
+            { label: 'Min of in / out', value: 'min' },
+            { label: 'People in', value: 'in' },
+          ]}
+          value={metric} onChange={setMetric}
+        />
+      </InlineStack>
+      <Text as="p" tone="subdued">
+        Average daily {metric === 'min' ? 'visitors (lower of people in / out)' : 'arrivals (people in)'} per weekday,
+        {' '}{from} to {to}. Days with no counter data are skipped, not counted as zero.
+      </Text>
+      {error ? <Banner tone="critical">{error.message}</Banner> : null}
+      {isLoading ? <Spinner /> : pt && pt.deviceCount === 0 ? (
+        <Banner tone="info">No counter device is mapped to this location. Assign one on the Devices page.</Banner>
+      ) : pt && !hasData ? (
+        <EmptyState heading="Not enough data in this range" image="">
+          <p>Needs at least {pt.minSamples} days of counter data per weekday. Try a longer period.</p>
+        </EmptyState>
+      ) : pt ? (
+        <>
+          <InlineStack gap="600">
+            <BlockStack gap="050"><Text as="span" tone="subdued" variant="bodySm">All days</Text><Text as="span" variant="headingMd">{groupAvg([0, 1, 2, 3, 4, 5, 6])}</Text></BlockStack>
+            <BlockStack gap="050"><Text as="span" tone="subdued" variant="bodySm">Weekdays (Mon–Fri)</Text><Text as="span" variant="headingMd">{groupAvg([1, 2, 3, 4, 5])}</Text></BlockStack>
+            <BlockStack gap="050"><Text as="span" tone="subdued" variant="bodySm">Weekends (Sat–Sun)</Text><Text as="span" variant="headingMd">{groupAvg([0, 6])}</Text></BlockStack>
+          </InlineStack>
+          <div style={{ width: '100%', height: 320 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                <ChartTooltip
+                  formatter={(v, name, item) => [`${v} (${item.payload.samples} days)`, metric === 'min' ? 'Avg visitors' : 'Avg arrivals']}
+                />
+                <Bar dataKey="avg" name="avg" radius={[3, 3, 0, 0]}>
+                  {chartData.map((d) => (
+                    <Cell key={d.label} fill={d.avg === peak ? '#008060' : '#b5d9cf'} />
+                  ))}
+                </Bar>
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+          <Text as="p" tone="subdued" variant="bodySm">
+            Dark bar = busiest weekday. Weekdays with fewer than {pt.minSamples} days of data are hidden.
+          </Text>
+        </>
+      ) : null}
+    </BlockStack>
+  );
+}
+
+function PopularTimesReport() {
+  const [view, setView] = useState('hourly');
+  return (
+    <BlockStack gap="400">
+      <ButtonGroup variant="segmented">
+        <Button pressed={view === 'hourly'} onClick={() => setView('hourly')}>Hourly</Button>
+        <Button pressed={view === 'daily'} onClick={() => setView('daily')}>Daily average</Button>
+      </ButtonGroup>
+      {view === 'hourly' ? <PopularTimesHourly /> : <PopularTimesDaily />}
     </BlockStack>
   );
 }
