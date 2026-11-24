@@ -29,8 +29,8 @@ const round1 = (n) => Math.round(n * 10) / 10;
 // Largest bar width (1–3 printer dots) whose ~13-digit Code-128 (≈113 modules incl. quiet zone) fits the frame width.
 function pickModuleMm(frameW, dpi) {
   const dot = 25.4 / dpi;
-  for (const dots of [3, 2, 1]) if (dots * dot * 113 <= frameW * 0.95) return round1k(dots * dot);
-  return round1k(dot);
+  for (const dots of [3, 2]) if (dots * dot * 113 <= frameW * 0.95) return round1k(dots * dot);
+  return round1k(2 * dot); // never 1 dot — single-dot bars print blurred
 }
 const round1k = (n) => Math.round(n * 1000) / 1000;
 

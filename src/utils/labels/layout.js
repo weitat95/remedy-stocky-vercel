@@ -20,7 +20,9 @@ export const frameOf = (label, rotation) =>
 export const scaleOf = (cfg) => Math.min(cfg.label.w / cfg.design.w, cfg.label.h / cfg.design.h);
 
 export const dotMm = (dpi) => 25.4 / dpi;
-export const snapToDots = (mm, dpi) => Math.max(1, Math.round(mm / dotMm(dpi))) * dotMm(dpi);
+// Thermal heads smear 1-dot bars, so a bar is never narrower than this many printer dots.
+export const MIN_MODULE_DOTS = 2;
+export const snapToDots = (mm, dpi) => Math.max(MIN_MODULE_DOTS, Math.round(mm / dotMm(dpi))) * dotMm(dpi);
 
 const err = (code, message, extra = {}) => ({ code, message, ...extra });
 
@@ -75,7 +77,7 @@ export function layoutLabel(cfg, data, measure) {
   const quiet = cfg.barcode.quietModules * module;
   if (barW + 2 * quiet > frame.w + 1e-9) {
     errors.push(err('BARCODE_TOO_WIDE',
-      `Barcode needs ${(barW + 2 * quiet).toFixed(1)} mm (incl. quiet zones) but the label is ${frame.w.toFixed(1)} mm wide — lower the barcode size`,
+      `Barcode needs ${(barW + 2 * quiet).toFixed(1)} mm (incl. quiet zones) but the label is ${frame.w.toFixed(1)} mm wide (bars can't be thinner than ${MIN_MODULE_DOTS} printer dots, ${(MIN_MODULE_DOTS * dotMm(cfg.printerDpi)).toFixed(2)} mm, or they print blurred) — use a shorter barcode or a wider label`,
       { needed: barW + 2 * quiet, available: frame.w }));
   }
 

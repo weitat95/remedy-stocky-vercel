@@ -59,8 +59,20 @@ test('presets: Dymo pages match the sample PDFs; every preset lays out a normal 
     const r = layoutLabel(configFromPreset(key), { title: 'Card Wallet - Black', price: 'RM99.00', barcode: '30000444' }, real);
     assert.ok(r.ok, `${key}: ${r.errors.map((e) => e.message)}`);
   }
+  // 19 mm can't hold an 8-digit Code-128 with bars of >= 2 printer dots — blocked rather than printed blurred
   const tag = layoutLabel(configFromPreset('dymo-30299'), { price: 'RM99.00', barcode: '30000444' }, real);
-  assert.ok(tag.ok, tag.errors.map((e) => e.message).join());
+  assert.ok(!tag.ok && tag.errors[0].code === 'BARCODE_TOO_WIDE');
+  const tagShort = layoutLabel(configFromPreset('dymo-30299'), { price: 'RM99.00', barcode: '1234' }, real);
+  assert.ok(tagShort.ok, tagShort.errors.map((e) => e.message).join());
+});
+
+test('layout: bars are never thinner than 2 printer dots, however small the label or barcode scale', () => {
+  const cfg = configFromPreset('dymo-30336');
+  for (const scale of [0.2, 0.5, 1]) {
+    const r = layoutLabel({ ...cfg, barcode: { ...cfg.barcode, scale, moduleMm: 0.05 } }, { title: 'A', price: 'RM1', barcode: '30000444' }, real);
+    assert.ok(r.ok);
+    assert.ok(r.stats.module >= 2 * 25.4 / cfg.printerDpi - 1e-9, `scale ${scale}: module ${r.stats.module}`);
+  }
 });
 
 test('layout: everything stays inside the frame and stacks title, price, bars, number', () => {
