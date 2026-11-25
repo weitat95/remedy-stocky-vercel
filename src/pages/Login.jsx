@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { Box, Card, FormLayout, TextField, Button, Text, Banner, BlockStack } from '@shopify/polaris';
 import { login } from '../api/auth.js';
 import useLogoSrc from '../hooks/useLogoSrc.js';
+import InstallHint from '../components/InstallHint.jsx';
 
 export default function Login({ onLoginSuccess }) {
   const logoSrc = useLogoSrc('black'); // Card background is light
@@ -16,7 +17,7 @@ export default function Login({ onLoginSuccess }) {
     setLoading(true);
     try {
       const data = await login(username, password);
-      onLoginSuccess(data.user);
+      onLoginSuccess(data);
     } catch (err) {
       setError(err.status === 401 ? 'Invalid username or password' : (err.message || 'Login failed'));
     } finally {
@@ -65,6 +66,7 @@ export default function Login({ onLoginSuccess }) {
             </BlockStack>
           </form>
         </Card>
+        <Box paddingBlockStart="400"><InstallHint /></Box>
       </Box>
     </Box>
   );

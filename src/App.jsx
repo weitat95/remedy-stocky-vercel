@@ -1,6 +1,8 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { Frame, Navigation, TopBar } from '@shopify/polaris';
+import { Banner, Box, Frame, Navigation, TopBar } from '@shopify/polaris';
+import useOnlineStatus from './hooks/useOnlineStatus.js';
+import ConnectionProblem from './components/ConnectionProblem.jsx';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   HomeIcon,
@@ -48,6 +50,8 @@ import Transfers from './pages/Transfers/index.jsx';
 import DraftOrders from './pages/DraftOrders/index.jsx';
 import Devices from './pages/Devices/index.jsx';
 import Reports from './pages/Reports/index.jsx';
+import Users from './pages/Users/index.jsx';
+import Tasks from './pages/Tasks/index.jsx';
 
 const APP_TITLE = 'Stocky';
 
@@ -58,6 +62,8 @@ const PAGE_TITLES = {
   '/suppliers': 'Suppliers',
   '/locations': 'Locations',
   '/devices': 'Devices',
+  '/users': 'Users',
+  '/tasks': 'Tasks',
   '/purchase-orders': 'Purchases',
   '/orders': 'Orders',
   '/draft-orders': 'Draft Orders',
@@ -98,6 +104,7 @@ export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const online = useOnlineStatus();
 
   useEffect(() => {
     document.title = titleForPath(location.pathname);
@@ -122,29 +129,48 @@ export default function App() {
   }, [faviconLogoSrc]);
 
   // Session check — GET /auth/me returns 401 if the httpOnly cookie is missing/expired.
-  const { data: session, isLoading: sessionLoading } = useQuery({
+  const { data: session, isLoading: sessionLoading, error: sessionError, refetch: refetchSession } = useQuery({
     queryKey: ['auth-me'],
     queryFn: getMe,
     retry: false,
     staleTime: Infinity,
   });
 
+  // Cached data belongs to whoever was signed in: drop all of it whenever the user changes, so the next
+  // person on a shared device (a store iPad) never sees the previous user's tasks or buttons. Everything
+  // EXCEPT 'auth-me': removing that query would detach the observer above and the app would never notice
+  // the next login.
+  const dropUserData = useCallback(
+    () => queryClient.removeQueries({ predicate: (q) => q.queryKey[0] !== 'auth-me' }),
+    [queryClient]
+  );
+
+  // "Server unreachable" is remembered separately from the query state: a retry puts the query back to
+  // loading (which would otherwise blank the screen), so keep showing the connection screen until it
+  // succeeds or the server answers with a real status (e.g. 401 = logged out).
+  const [unreachable, setUnreachable] = useState(false);
+  useEffect(() => {
+    if (session || sessionError?.status) setUnreachable(false);
+    else if (sessionError) setUnreachable(true);
+  }, [session, sessionError]);
+
   // Any API call (not just this one) that gets a 401 mid-session should drop back to Login.
   useEffect(() => {
-    const onUnauthorized = () => queryClient.setQueryData(['auth-me'], null);
+    const onUnauthorized = () => { dropUserData(); queryClient.setQueryData(['auth-me'], null); };
     window.addEventListener('auth:unauthorized', onUnauthorized);
     return () => window.removeEventListener('auth:unauthorized', onUnauthorized);
-  }, [queryClient]);
+  }, [queryClient, dropUserData]);
 
   const handleLoginSuccess = useCallback(
-    (user) => queryClient.setQueryData(['auth-me'], { user }),
-    [queryClient]
+    (session) => { dropUserData(); queryClient.setQueryData(['auth-me'], session); },
+    [queryClient, dropUserData]
   );
 
   const handleLogout = useCallback(async () => {
     await logoutApi();
+    dropUserData();
     queryClient.setQueryData(['auth-me'], null);
-  }, [queryClient]);
+  }, [queryClient, dropUserData]);
 
   const toggleMobileNav = useCallback(() => setMobileNavActive((v) => !v), []);
   const toggleUserMenu = useCallback(() => setUserMenuActive((v) => !v), []);
@@ -363,11 +389,50 @@ export default function App() {
           },
         ]}
       />
+      <Navigation.Section
+        items={[
+          { label: 'Tasks', icon: CalendarTimeIcon, url: '/tasks', onClick: () => navigate('/tasks'), selected: is('/tasks') },
+        ]}
+      />
+      <Navigation.Section
+        title="Admin"
+        items={[
+          {
+            label: 'Users',
+            icon: PersonIcon,
+            url: '/users',
+            onClick: () => navigate('/users'),
+            selected: is('/users'),
+          },
+        ]}
+      />
     </Navigation>
   );
 
+  // Non-admin roles get a short nav; the backend allowlist (services/roleAccess.js) is what actually
+  // enforces access, this only hides what would 403. Retail gets just Tasks.
+  const limitedItems = [
+    { label: 'Tasks', icon: CalendarTimeIcon, url: '/tasks' },
+    { label: 'Orders', icon: OrderIcon, url: '/orders' },
+    { label: 'Products', icon: ProductIcon, url: '/inventory/products' },
+    { label: 'Max Quantity', icon: MaximizeIcon, url: '/inventory/max-quantity' },
+    { label: 'Labels', icon: PrintIcon, url: '/inventory/labels' },
+    { label: 'Adjustments', icon: AdjustIcon, url: '/inventory/adjustments' },
+    { label: 'Transfers', icon: TransferIcon, url: '/transfers' },
+    { label: 'Reports', icon: ChartLineIcon, url: '/reports' },
+  ].map((i) => ({ ...i, onClick: () => navigate(i.url), selected: is(i.url) }));
+  const limitedNavigationMarkup = (
+    <Navigation location={location.pathname}>
+      <Navigation.Section items={session?.role === 'manager' ? limitedItems : limitedItems.slice(0, 1)} />
+    </Navigation>
+  );
+
+  // No response at all (offline / server down) is not the same as being logged out.
+  if (!session && unreachable) return <ConnectionProblem onRetry={refetchSession} retrying={sessionLoading} />;
   if (sessionLoading) return null;
   if (!session) return <Login onLoginSuccess={handleLoginSuccess} />;
+
+  const isAdmin = session.role === 'admin';
 
   const userMenuMarkup = (
     <TopBar.UserMenu
@@ -396,12 +461,23 @@ export default function App() {
         accessibilityLabel: 'Logo',
       } : undefined}
       topBar={topBarMarkup}
-      navigation={navigationMarkup}
+      navigation={isAdmin ? navigationMarkup : limitedNavigationMarkup}
       showMobileNavigation={mobileNavActive}
       onNavigationDismiss={toggleMobileNav}
     >
+      {!online && (
+        <Box padding="400" paddingBlockEnd="0">
+          <Banner tone="warning" title="You're offline">
+            <p>Changes can't be saved until you're back online. The list shows what was loaded last.</p>
+          </Banner>
+        </Box>
+      )}
       <Routes>
+        {isAdmin ? (
+          <>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/users" element={<Users />} />
+        <Route path="/tasks" element={<Tasks />} />
         <Route path="/vendors" element={<Vendors />} />
         <Route path="/vendors/:id" element={<VendorDetail />} />
         <Route path="/suppliers" element={<Suppliers />} />
@@ -424,6 +500,24 @@ export default function App() {
         <Route path="/inventory/adjustments/:id" element={<AdjustmentDetail />} />
         <Route path="/transfers/*" element={<Transfers />} />
         <Route path="/reports/*" element={<Reports />} />
+          </>
+        ) : (
+          <>
+            {session.role === 'manager' && (
+              <>
+                <Route path="/orders" element={<Orders />} />
+                <Route path="/inventory/products" element={<Products />} />
+                <Route path="/inventory/max-quantity" element={<MaxQuantity />} />
+                <Route path="/inventory/labels" element={<Labels />} />
+                <Route path="/inventory/adjustments" element={<Adjustments />} />
+                <Route path="/inventory/adjustments/:id" element={<AdjustmentDetail />} />
+                <Route path="/transfers/*" element={<Transfers />} />
+                <Route path="/reports/*" element={<Reports />} />
+              </>
+            )}
+            <Route path="*" element={<Tasks />} />
+          </>
+        )}
       </Routes>
     </Frame>
   );
