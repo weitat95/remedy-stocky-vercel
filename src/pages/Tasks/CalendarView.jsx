@@ -43,7 +43,9 @@ const byDue = (a, b) => a.dueDate.localeCompare(b.dueDate) || (RANK[a.group] - R
 function Chip({ item }) {
   const g = GROUP[item.group];
   return (
-    <span style={{
+    <span
+      title={`${item.title} · ${item.upcoming ? 'Upcoming repeat' : g.label}`}
+      style={{
       display: 'flex', alignItems: 'center', gap: 4, height: 22, padding: '0 6px', borderRadius: 6, boxSizing: 'border-box',
       fontSize: 12, fontWeight: 500, overflow: 'hidden', whiteSpace: 'nowrap', background: item.upcoming ? 'var(--p-color-bg-surface)' : g.bg,
       color: item.upcoming ? 'var(--p-color-text-secondary)' : g.fg,

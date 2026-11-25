@@ -1,9 +1,9 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import {
-  Page, Card, Tabs, ButtonGroup, IndexTable, Text, Badge, Button, Banner, Modal, TextField, Select, Toast,
+  Page, Card, ButtonGroup, Icon, IndexTable, Text, Badge, Button, Banner, Modal, TextField, Select, Toast,
   BlockStack, InlineStack, Popover, ActionList, Box, Spinner, useBreakpoints,
 } from '@shopify/polaris';
-import { MenuHorizontalIcon } from '@shopify/polaris-icons';
+import { MenuHorizontalIcon, SearchIcon, AlertTriangleIcon } from '@shopify/polaris-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { getMe } from '../../api/auth.js';
@@ -11,7 +11,7 @@ import useOnlineStatus from '../../hooks/useOnlineStatus.js';
 import { getLocations } from '../../api/inventory.js';
 import {
   getTasks, getTask, getTaskSummary, getAssignees, completeTask, uncompleteTask, reviewTask, unreviewTask,
-  dismissTask, deleteTask,
+  dismissTask, deleteTask, updateTask,
 } from '../../api/tasks.js';
 import { todayStr, addDays, weekStart, formatDay, formatDateTime } from '../../utils/storeDate.js';
 import TaskFormModal from './TaskFormModal.jsx';
@@ -42,8 +42,21 @@ export default function Tasks() {
   const today = todayStr();
   // Phones get one card per task (Polaris's condensed table). Mid widths (iPad portrait) fold the
   // assignee into the task cell so the action buttons are never pushed off the edge.
-  const { smDown, mdDown } = useBreakpoints();
-  const showAssigneeColumn = manager && !mdDown;
+  // Layout follows the width of the page CONTENT, not the window: the nav sidebar takes ~230px, so a
+  // 1000px window can leave only ~600px for the table and the action buttons got clipped.
+  const { mdDown } = useBreakpoints();
+  const boxRef = useRef(null);
+  const [boxWidth, setBoxWidth] = useState(() => (typeof window === 'undefined' ? 1200 : window.innerWidth));
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(([e]) => setBoxWidth(Math.round(e.contentRect.width)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const smDown = boxWidth < 720;            // cards instead of a table
+  const showAssigneeColumn = manager && boxWidth >= 900;
+  const showTaskDate = manager && boxWidth >= 1000;
 
   const { data: tasks = [], isLoading, error } = useQuery({ queryKey: ['tasks'], queryFn: () => getTasks(), refetchInterval: 60_000 });
   const { data: summary } = useQuery({ queryKey: ['task-summary'], queryFn: getTaskSummary, refetchInterval: 60_000 });
@@ -54,10 +67,12 @@ export default function Tasks() {
   // Managers can switch to a month calendar; the choice lives in the URL (?view=calendar) so it survives a refresh.
   const [params, setParams] = useSearchParams();
   const calendar = manager && params.get('view') === 'calendar';
+  const setCalendarOff = () => { if (calendar) setParams({}, { replace: true }); };
   const setView = (v) => setParams(v === 'calendar' ? { view: 'calendar' } : {}, { replace: true });
 
   const [tab, setTab] = useState(0);
   const [assigneeFilter, setAssigneeFilter] = useState('');
+  const [search, setSearch] = useState('');
   const [toast, setToast] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editTask, setEditTask] = useState(null);
@@ -98,15 +113,24 @@ export default function Tasks() {
   const tabs = [
     { id: 'week', content: 'This week', test: (t) => t.status === 'overdue' || (t.dueDate >= wkStart && t.dueDate <= wkEnd && t.status !== 'dismissed') },
     { id: 'open', content: 'To do', test: (t) => OPEN.includes(t.status) },
+    { id: 'overdue', content: 'Overdue', test: (t) => t.status === 'overdue' },
     ...(manager ? [{ id: 'review', content: 'Awaiting review', test: (t) => t.status === 'review' }] : []),
     { id: 'done', content: 'Done', test: (t) => ['done', 'reviewed', 'dismissed'].includes(t.status) },
     { id: 'all', content: 'All', test: () => true },
   ];
   const current = tabs[tab] || tabs[0];
 
-  const rows = useMemo(() => tasks
-    .filter((t) => current.test(t) && (!assigneeFilter || t.assigneeId === assigneeFilter))
-    .sort((a, b) => (RANK[a.status] - RANK[b.status]) || a.dueDate.localeCompare(b.dueDate)), [tasks, current, assigneeFilter]);
+  // Assignee + search narrow every tab, so the chip counts always match what the tab will show.
+  const base = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return tasks.filter((t) => (!assigneeFilter || t.assigneeId === assigneeFilter)
+      && (!q || `${t.title} ${t.description || ''} ${t.assigneeName || ''}`.toLowerCase().includes(q)));
+  }, [tasks, assigneeFilter, search]);
+  const counts = tabs.map((t) => base.filter(t.test).length);
+  const rows = useMemo(
+    () => base.filter(current.test).sort((a, b) => (RANK[a.status] - RANK[b.status]) || a.dueDate.localeCompare(b.dueDate)),
+    [base, current],
+  );
 
   const assigneeOptions = useMemo(() => {
     const seen = new Map();
@@ -170,10 +194,28 @@ export default function Tasks() {
   );
 
   const dueText = (t) => (
-    <Text variant="bodyMd" tone={t.status === 'overdue' ? 'critical' : undefined} fontWeight={t.status === 'overdue' ? 'semibold' : 'regular'}>
-      {formatDay(t.dueDate, today)}
-    </Text>
+    <InlineStack gap="100" blockAlign="center" wrap={false}>
+      {t.status === 'overdue' && <Icon source={AlertTriangleIcon} tone="critical" />}
+      <Text variant="bodyMd" as="span" tone={t.status === 'overdue' ? 'critical' : undefined} fontWeight={t.status === 'overdue' ? 'semibold' : 'regular'}>
+        {formatDay(t.dueDate, today)}
+      </Text>
+    </InlineStack>
   );
+
+  // Managers reassign an open task right in the list (only people who work at the task's location).
+  const assigneeCell = (t) => {
+    if (!t.permissions.canEdit) return t.assigneeName;
+    const opts = assignees
+      .filter((a) => a.role === 'admin' || !t.locationId || a.locationIds.includes(t.locationId))
+      .map((a) => ({ label: a.displayName || a.username, value: a.id }));
+    if (!opts.some((o) => o.value === t.assigneeId)) opts.unshift({ label: t.assigneeName, value: t.assigneeId });
+    return (
+      <Select
+        label={`Assigned to for ${t.title}`} labelHidden options={opts} value={t.assigneeId} disabled={act.isPending || !online}
+        onChange={(v) => act.mutate({ fn: updateTask, task: t, body: { assigneeId: v, locationId: t.locationId || undefined, scope: 'this' }, done: 'Reassigned' })}
+      />
+    );
+  };
 
   // Phone: one card per task (title, due + status, then the buttons), controlled here rather than by the table.
   const cards = rows.map((t) => (
@@ -192,31 +234,37 @@ export default function Tasks() {
   const tableRows = rows.map((t, i) => (
     <IndexTable.Row id={t.id} key={t.id} position={i}>
       <IndexTable.Cell>{titleBlock(t)}</IndexTable.Cell>
-      {showAssigneeColumn && <IndexTable.Cell>{t.assigneeName}</IndexTable.Cell>}
+      {showTaskDate && <IndexTable.Cell>{formatDay(t.taskDate, today)}</IndexTable.Cell>}
       <IndexTable.Cell>{dueText(t)}</IndexTable.Cell>
+      {showAssigneeColumn && <IndexTable.Cell>{assigneeCell(t)}</IndexTable.Cell>}
       <IndexTable.Cell>{statusCell(t)}</IndexTable.Cell>
       <IndexTable.Cell>{actionCell(t)}</IndexTable.Cell>
     </IndexTable.Row>
   ));
 
-  const headings = [{ title: 'Task' }, ...(showAssigneeColumn ? [{ title: 'Assigned to' }] : []), { title: 'Due' }, { title: 'Status' }, { title: '' }];
+  const headings = [{ title: 'Task' }, ...(showTaskDate ? [{ title: 'Task date' }] : []), { title: 'Due' }, ...(showAssigneeColumn ? [{ title: 'Assigned to' }] : []), { title: 'Status' }, { title: '' }];
   const confirmTask = confirm?.task;
+  const fullToday = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${today}T00:00:00Z`));
+  const openCount = tasks.filter((t) => OPEN.includes(t.status)).length;
+  const overdueCount = summary?.overdue ?? tasks.filter((t) => t.status === 'overdue').length;
+  const subtitle = `${session?.kind === 'store' ? `${session.displayName || session.user} · ` : ''}${fullToday} · ${openCount} open · ${overdueCount} overdue`;
 
   return (
     <>
       {toast && <Toast content={toast.message} error={toast.error} onDismiss={() => setToast(null)} />}
       <Page
         title="Tasks"
-        subtitle={session?.kind === 'store' ? session.displayName || session.user : undefined}
+        subtitle={subtitle}
         primaryAction={manager ? { content: 'New task', onAction: openNew } : undefined}
         secondaryActions={manager ? [{ content: 'Repeats', onAction: () => setRepeatsOpen(true) }] : []}
       >
+        <div ref={boxRef}>
         <BlockStack gap="400">
           {error && <Banner tone="critical">{error.message}</Banner>}
           {summary?.overdue > 0 && (
-            <Banner tone="critical" title={`${summary.overdue} overdue task${summary.overdue > 1 ? 's' : ''}`}>
-              <p>Open the “This week” tab to see them first.</p>
-            </Banner>
+            <Banner tone="critical" title={`${summary.overdue} overdue task${summary.overdue > 1 ? 's' : ''}`}
+              action={{ content: 'Show them', onAction: () => { setCalendarOff(); setTab(tabs.findIndex((x) => x.id === 'overdue')); } }}
+            />
           )}
           {manager && summary?.awaitingReview > 0 && (
             <Banner tone="info" title={`${summary.awaitingReview} task${summary.awaitingReview > 1 ? 's are' : ' is'} waiting for your review`}
@@ -238,12 +286,26 @@ export default function Tasks() {
             />
           ) : (
           <Card padding="0">
-            <Tabs tabs={tabs.map(({ id, content }) => ({ id, content }))} selected={tab} onSelect={setTab} />
-            {manager && assigneeOptions.length > 2 && (
-              <Box padding="300">
-                <Select label="Assigned to" labelInline options={assigneeOptions} value={assigneeFilter} onChange={setAssigneeFilter} />
-              </Box>
-            )}
+            <Box padding="300" paddingBlockEnd="0">
+              <InlineStack gap="150" wrap>
+                {tabs.map((t, i) => (
+                  <Button key={t.id} size={manager && !mdDown ? 'slim' : 'large'} pressed={tab === i} onClick={() => setTab(i)}>{`${t.content} ${counts[i]}`}</Button>
+                ))}
+              </InlineStack>
+            </Box>
+            <Box padding="300">
+              <InlineStack gap="300" blockAlign="center" wrap>
+                <div style={{ flex: '1 1 220px', minWidth: 0 }}>
+                  <TextField
+                    label="Search tasks" labelHidden placeholder="Search tasks" value={search} onChange={setSearch} autoComplete="off"
+                    prefix={<Icon source={SearchIcon} />} clearButton onClearButtonClick={() => setSearch('')}
+                  />
+                </div>
+                {manager && assigneeOptions.length > 2 && (
+                  <Select label="Assigned to" labelInline options={assigneeOptions} value={assigneeFilter} onChange={setAssigneeFilter} />
+                )}
+              </InlineStack>
+            </Box>
             {isLoading ? (
               <Box padding="600"><InlineStack align="center"><Spinner accessibilityLabel="Loading tasks" /></InlineStack></Box>
             ) : smDown ? (
@@ -265,6 +327,7 @@ export default function Tasks() {
           </Card>
           )}
         </BlockStack>
+        </div>
       </Page>
 
       <Modal
