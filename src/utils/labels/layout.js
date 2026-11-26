@@ -6,7 +6,7 @@
 // proportional. `barcode.scale` is a separate multiplier for the barcode alone — text keeps its size and
 // the barcode must fit in the room that is left (it never silently shrinks or gets cut off).
 
-import { encodeCode128, barRuns } from './barcode.js';
+import { encodeCode128 } from './barcode.js';
 
 export const PT_MM = 25.4 / 72;
 const LINE_HEIGHT = 1.2;
@@ -51,6 +51,23 @@ function fitLine(text, size, bold, maxW, measure) {
 
 const lineBox = (sizePt) => sizePt * PT_MM * LINE_HEIGHT;
 
+// Bar/gap positions in whole printer dots. Each run of modules is mDots wide per module; bars lose `shrink`
+// dots and gaps gain `shrink` dots, accumulated edge to edge so every edge lands on a dot.
+export function barDots(bits, mDots, shrink = 0) {
+  const rects = [];
+  let x = 0;
+  for (let i = 0; i < bits.length;) {
+    let j = i;
+    while (bits[j] === bits[i]) j++;
+    const isBar = bits[i] === '1';
+    const w = (j - i) * mDots + (isBar ? -shrink : shrink);
+    if (isBar) rects.push({ x, w });
+    x += w;
+    i = j;
+  }
+  return { rects, totalDots: x };
+}
+
 // data: { title, price, sku, custom, barcode } — already sanitised strings (or null when absent/off).
 // measure(text, sizePt, bold) → width in mm.
 export function layoutLabel(cfg, data, measure) {
@@ -72,7 +89,13 @@ export function layoutLabel(cfg, data, measure) {
   }
   const bScale = cfg.barcode.scale;
   const module = snapToDots(cfg.barcode.moduleMm * s * bScale, cfg.printerDpi);
-  const barW = enc.modules * module;
+  const dot = dotMm(cfg.printerDpi);
+  // Bar shrink: every bar is N whole dots thinner and every gap N dots wider (edges stay on the dot grid).
+  // A bar never goes below MIN_MODULE_DOTS, so a 2-dot module can't shrink at all.
+  const mDots = Math.round(module / dot);
+  const shrink = Math.max(0, Math.min(Math.round(cfg.barcode.barShrinkDots || 0), mDots - MIN_MODULE_DOTS));
+  const bars = barDots(enc.bits, mDots, shrink); // [{ x, w }] in printer dots, x from the barcode's left edge
+  const barW = bars.totalDots * dot;
   const barH = cfg.barcode.heightMm * s * bScale;
   const quiet = cfg.barcode.quietModules * module;
   if (barW + 2 * quiet > frame.w + 1e-9) {
@@ -136,7 +159,7 @@ export function layoutLabel(cfg, data, measure) {
   for (const b of blocks) {
     if (b.key === 'bars') {
       const x0 = (frame.w - barW) / 2;
-      for (const r of barRuns(enc.bits)) elements.push({ kind: 'rect', x: x0 + r.start * module, y, w: r.len * module, h: barH });
+      for (const r of bars.rects) elements.push({ kind: 'rect', x: x0 + r.x * dot, y, w: r.w * dot, h: barH });
     } else {
       const lh = lineBox(b.size);
       b.lines.forEach((text, i) => {

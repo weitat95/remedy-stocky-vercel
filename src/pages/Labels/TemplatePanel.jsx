@@ -129,6 +129,9 @@ export default function TemplatePanel({
             <NumberField label="Printer resolution" suffix="dpi" value={cfg.printerDpi} min={72} max={1200} step={1} onChange={(v) => setCfg((c) => ({ ...c, printerDpi: v }))} />
             <NumberField label="Quiet zone" suffix="bars" value={cfg.barcode.quietModules} min={0} max={20} step={1} onChange={(v) => patch('barcode', { quietModules: Math.round(v) })} />
           </FormLayout.Group>
+          <NumberField label="Bar shrink" suffix="dots" value={cfg.barcode.barShrinkDots ?? 0} min={0} max={4} step={1}
+            helpText="Each bar this many printer dots thinner, each gap this many wider — stops thin bars merging. Needs bars of 3+ dots (bar width 0.375 mm or more); bars never go below 2 dots."
+            onChange={(v) => patch('barcode', { barShrinkDots: Math.round(v) })} />
           <Checkbox label="Print the barcode number under the bars" checked={cfg.number.on} onChange={(v) => patch('number', { on: v })} />
           {cfg.number.on && <NumberField label="Number size" suffix="pt" value={cfg.number.size} min={2} max={60} step={0.5} onChange={(v) => patch('number', { size: v })} />}
         </BlockStack>

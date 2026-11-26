@@ -279,3 +279,24 @@ test('2-up: rows of two labels in CSV order, odd total leaves the last slot blan
   const gapped = { ...cfg, acrossGap: 2 };
   assert.equal(pageGeometry(gapped, 0).page.w, 62);
 });
+
+test('layout: bar shrink makes bars thinner and gaps wider by whole dots, never below 2-dot bars', () => {
+  const dot = 25.4 / 203;
+  const base = configFromPreset('zebra-10010039');
+  const at = (moduleMm, barShrinkDots) =>
+    layoutLabel({ ...base, barcode: { ...base.barcode, moduleMm, barShrinkDots } }, { title: 'A', price: 'RM1', barcode: '30000474' }, real);
+  const plain = at(0.375, 0), shrunk = at(0.375, 1);
+  assert.ok(plain.ok && shrunk.ok);
+  const bars = (r) => r.elements.filter((e) => e.kind === 'rect');
+  assert.equal(bars(plain).length, bars(shrunk).length);
+  assert.ok(Math.abs(Math.min(...bars(plain).map((e) => e.w)) - 3 * dot) < 1e-6);
+  assert.ok(Math.abs(Math.min(...bars(shrunk).map((e) => e.w)) - 2 * dot) < 1e-6);
+  // gaps between bars: 3-dot -> 4-dot minimum
+  const gap = (r) => Math.min(...bars(r).slice(1).map((e, i) => e.x - (bars(r)[i].x + bars(r)[i].w)));
+  assert.ok(Math.abs(gap(plain) - 3 * dot) < 1e-6 && Math.abs(gap(shrunk) - 4 * dot) < 1e-6);
+  // every edge sits on the dot grid
+  for (const e of bars(shrunk)) assert.ok(Math.abs(e.w / dot - Math.round(e.w / dot)) < 1e-6);
+  // a 2-dot module can't shrink (bars would drop below 2 dots)
+  const two = at(0.25, 2);
+  assert.ok(Math.abs(Math.min(...bars(two).map((e) => e.w)) - 2 * dot) < 1e-6);
+});

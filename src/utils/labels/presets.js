@@ -61,7 +61,7 @@ export function buildConfig({ label, page, rotation = 0, presetKey = CUSTOM_PRES
     sku: { on: false, size: round1(Math.max(3, 8 * k)) },
     custom: { on: false, text: '', size: round1(Math.max(3, 8 * k)) },
     number: { on: true, size: round1(Math.max(3, 8 * k)) },
-    barcode: { scale: 1, moduleMm: pickModuleMm(frame.w, dpi), heightMm: barcodeOnly ? round1(frame.h * 0.5) : round1(Math.max(3, 7 * k)), quietModules: 6 },
+    barcode: { scale: 1, moduleMm: pickModuleMm(frame.w, dpi), heightMm: barcodeOnly ? round1(frame.h * 0.5) : round1(Math.max(3, 7 * k)), quietModules: 6, barShrinkDots: 0 },
   };
 }
 
